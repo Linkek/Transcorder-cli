@@ -10,7 +10,13 @@ export function probeFile(filePath: string): Promise<VideoMetadata> {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, data) => {
       if (err) {
-        reject(new Error(`ffprobe failed for ${filePath}: ${err.message}`));
+        // Strip ffprobe version/config dump from error messages
+        const msg = err.message
+          .replace(/ffprobe version[\s\S]*?\n(?=\/|$)/m, '')
+          .replace(/\s+built with[\s\S]*?configuration:[^\n]*/g, '')
+          .replace(/\s+lib\w+\s+\d+\.\s*\d+\.\d+[^\n]*/g, '')
+          .trim();
+        reject(new Error(`ffprobe failed for ${filePath}: ${msg}`));
         return;
       }
 

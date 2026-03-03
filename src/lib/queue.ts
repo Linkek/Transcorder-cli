@@ -168,6 +168,13 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
   const ts = () => chalk.gray(new Date().toLocaleTimeString('en-GB', { hour12: false }));
 
   try {
+    // ── Step 0: Verify source file exists ──────────────────────────────────
+    if (!fs.existsSync(filePath)) {
+      updateJobStatus(job.id, 'failed', { error: 'Source file no longer exists' });
+      dashLog(`${ts()} ${chalk.red(figures.cross)} Missing: ${chalk.white(fileName)} — source file no longer exists`);
+      return;
+    }
+
     // ── Step 1: Check ─────────────────────────────────────────────────────
     updateJobStatus(job.id, 'checking');
     logger.debug(`Checking: ${filePath}`);
@@ -296,6 +303,14 @@ export function resumePendingJobs(profiles: Profile[]): void {
     if (!profile) {
       logger.warn(`Profile "${job.profileName}" not found for job #${job.id}, skipping`);
       updateJobStatus(job.id, 'failed', { error: `Profile "${job.profileName}" not found` });
+      continue;
+    }
+
+    // Check if the source file still exists (may have been replaced/renamed)
+    if (!fs.existsSync(job.sourcePath)) {
+      const name = path.basename(job.sourcePath);
+      logger.warn(`Source file no longer exists, marking as failed: ${name}`);
+      updateJobStatus(job.id, 'failed', { error: 'Source file no longer exists' });
       continue;
     }
 
