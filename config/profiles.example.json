@@ -1,0 +1,38 @@
+[
+    {
+        "name": "series",
+        "sourceFolders": "/mnt/nas/Media/Series/",
+        "recursive": true,
+        "replaceFile": true,
+        "outputFormat": "mkv",
+        "cacheFolder": "cache",
+        "maxWidth": 1280,
+        "maxHeight": 720,
+        "downscaleToMax": true,
+        "renameFiles": true,
+        "removeHDR": true,
+        "nvencPreset": "p4",
+        "cqValue": 23,
+        "log": false,
+        "priority": 10,
+        "minSizeReduction": 2
+    },
+    {
+        "name": "movies",
+        "sourceFolders": "/mnt/nas/Media/Movies/",
+        "recursive": true,
+        "replaceFile": true,
+        "outputFormat": "mkv",
+        "cacheFolder": "cache",
+        "maxWidth": 1920,
+        "maxHeight": 1080,
+        "downscaleToMax": true,
+        "renameFiles": true,
+        "removeHDR": true,
+        "nvencPreset": "p4",
+        "cqValue": 23,
+        "log": false,
+        "priority": 5,
+        "minSizeReduction": 2
+    }
+]
