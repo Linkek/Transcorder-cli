@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { logger } from './lib/logger.js';
 import { loadProfiles, initConfig, formatProfiles } from './lib/profiles.js';
-import { resetDatabase, clearJobs, getAllJobs, closeDb, addJob, addMetadata, updateJobStatus, getJobsByStatus, hasCompletedJob, markInterruptedJobsAsFailed } from './lib/db.js';
+import { resetDatabase, clearJobs, getAllJobs, closeDb, addJob, addMetadata, updateJobStatus, getJobsByStatus, hasCompletedJob, markInterruptedJobsAsFailed, getStats } from './lib/db.js';
 import { checkFfmpegAvailable, checkNvencAvailable, formatResolution, formatFileSize } from './lib/ffmpeg.js';
 import { analyzeFile, formatAnalysis } from './lib/check.js';
 import { transcode, replaceOriginal, dryRun } from './lib/transcode.js';
@@ -561,6 +561,27 @@ async function statusMenu(): Promise<void> {
         console.log();
         const jobs = getAllJobs(100).filter((j) => j.status === 'completed');
         showJobTable(jobs);
+        await waitForKey();
+      },
+    },
+    {
+      label: 'Space Saved',
+      description: 'Total disk space saved by transcoding',
+      action: async () => {
+        console.log();
+        const stats = getStats();
+        const savedGB = stats.savedBytes / (1024 * 1024 * 1024);
+        let savedStr: string;
+        if (savedGB >= 1024) {
+          savedStr = `${(savedGB / 1024).toFixed(2)} TB`;
+        } else if (savedGB >= 1) {
+          savedStr = `${savedGB.toFixed(2)} GB`;
+        } else {
+          savedStr = `${(stats.savedBytes / (1024 * 1024)).toFixed(2)} MB`;
+        }
+        console.log(chalk.bold(`  Total space saved: ${chalk.hex('#7C4DFF')(savedStr)}`));
+        console.log(chalk.gray(`  From ${stats.completed} completed transcode(s)`));
+        console.log();
         await waitForKey();
       },
     },

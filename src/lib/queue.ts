@@ -258,13 +258,15 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
     }
     const outputSize = fs.statSync(outputPath).size;
     const elapsed = (Date.now() - startTime) / 1000;
+    const savedBytes = originalSize - outputSize;
 
-    updateJobStatus(job.id, 'completed', { outputPath });
+    updateJobStatus(job.id, 'completed', { outputPath, savedBytes });
 
+    const savedStr = savedBytes > 0 ? `, saved ${formatFileSize(savedBytes)}` : '';
     clearWorkerAndLog(slot,
-      `${ts()} ${chalk.green(figures.tick)} Done: ${chalk.white(fileName)} ${chalk.gray(`(${formatFileSize(outputSize)}, ${formatDuration(elapsed)})`)}`,
+      `${ts()} ${chalk.green(figures.tick)} Done: ${chalk.white(fileName)} ${chalk.gray(`(${formatFileSize(outputSize)}, ${formatDuration(elapsed)}${savedStr})`)}`,
     );
-    logger.success(`${fileName} → ${path.basename(outputPath)} (${formatFileSize(outputSize)})`);
+    logger.success(`${fileName} → ${path.basename(outputPath)} (${formatFileSize(outputSize)}${savedStr})`);
 
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

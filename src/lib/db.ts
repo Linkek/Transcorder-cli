@@ -34,7 +34,8 @@ function initSchema(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       started_at TEXT,
       completed_at TEXT,
-      error TEXT
+      error TEXT,
+      saved_bytes INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS source_metadata (
@@ -58,6 +59,12 @@ function initSchema(): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_unique ON jobs(source_path)
       WHERE status IN ('pending', 'checking', 'transcoding', 'replacing');
   `);
+
+  // Migration: add saved_bytes column if missing (for existing DBs)
+  const cols = d.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'saved_bytes')) {
+    d.exec("ALTER TABLE jobs ADD COLUMN saved_bytes INTEGER DEFAULT 0");
+  }
 }
 
 // ─── Job CRUD ───────────────────────────────────────────────────────────────
@@ -108,7 +115,7 @@ export function addMetadata(
   );
 }
 
-export function updateJobStatus(jobId: number, status: JobStatus, extra?: { outputPath?: string; error?: string }): void {
+export function updateJobStatus(jobId: number, status: JobStatus, extra?: { outputPath?: string; error?: string; savedBytes?: number }): void {
   const d = getDb();
   const sets: string[] = ['status = ?'];
   const params: unknown[] = [status];
@@ -126,6 +133,10 @@ export function updateJobStatus(jobId: number, status: JobStatus, extra?: { outp
   if (extra?.error) {
     sets.push('error = ?');
     params.push(extra.error);
+  }
+  if (extra?.savedBytes != null) {
+    sets.push('saved_bytes = ?');
+    params.push(extra.savedBytes);
   }
 
   params.push(jobId);
@@ -216,7 +227,7 @@ export function markInterruptedJobsAsFailed(): number {
   return result.changes;
 }
 
-export function getStats(): { total: number; pending: number; completed: number; failed: number; skipped: number } {
+export function getStats(): { total: number; pending: number; completed: number; failed: number; skipped: number; savedBytes: number } {
   const d = getDb();
   const row = d.prepare(`
     SELECT
@@ -224,9 +235,10 @@ export function getStats(): { total: number; pending: number; completed: number;
       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-      SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped
+      SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) as skipped,
+      COALESCE(SUM(CASE WHEN status = 'completed' THEN saved_bytes ELSE 0 END), 0) as savedBytes
     FROM jobs
-  `).get() as { total: number; pending: number; completed: number; failed: number; skipped: number };
+  `).get() as { total: number; pending: number; completed: number; failed: number; skipped: number; savedBytes: number };
   return row;
 }
 

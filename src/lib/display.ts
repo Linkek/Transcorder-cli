@@ -94,12 +94,26 @@ export function showJobTable(jobs: Job[]): void {
 
 export function showStatsBox(): void {
   const stats = getStats();
+
+  // Format saved space: use TB if >= 1 TB, otherwise GB
+  let savedStr: string;
+  const savedGB = stats.savedBytes / (1024 * 1024 * 1024);
+  if (savedGB >= 1024) {
+    savedStr = `${(savedGB / 1024).toFixed(2)} TB`;
+  } else if (savedGB >= 1) {
+    savedStr = `${savedGB.toFixed(2)} GB`;
+  } else {
+    savedStr = formatFileSize(stats.savedBytes);
+  }
+
   const lines = [
     `${chalk.white('Total:')}      ${stats.total}`,
     `${chalk.cyan('Pending:')}    ${stats.pending}`,
     `${chalk.green('Completed:')}  ${stats.completed}`,
     `${chalk.red('Failed:')}     ${stats.failed}`,
     `${chalk.gray('Skipped:')}    ${stats.skipped}`,
+    '',
+    `${chalk.hex('#7C4DFF')('Saved:')}      ${chalk.bold(savedStr)}`,
   ];
 
   const box = boxen(lines.join('\n'), {
