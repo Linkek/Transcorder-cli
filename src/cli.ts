@@ -11,7 +11,7 @@ import { checkFfmpegAvailable, checkNvencAvailable, formatResolution, formatFile
 import { analyzeFile, formatAnalysis } from './lib/check.js';
 import { transcode, replaceOriginal, dryRun } from './lib/transcode.js';
 import { startWatching, stopWatching, scanFolder } from './lib/watcher.js';
-import { queueFile, resumePendingJobs } from './lib/queue.js';
+import { queueFile, resumePendingJobs, getQueueStatus } from './lib/queue.js';
 import { clearAllCaches } from './lib/cache.js';
 import {
   showBanner,
@@ -34,16 +34,26 @@ const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  const verbose = args.includes('--verbose') || args.includes('-v');
 
-  if (args.length > 0 && args[0] === 'start') {
+  if (args[0] === 'start' || args[0] === 'daemon') {
     // Direct daemon start — no menu needed
-    await startDaemon(args.includes('--verbose') || args.includes('-v'));
+    await startDaemon(verbose);
+  } else if (args[0] === 'scan') {
+    // Direct scan & process all profiles — no menu needed
+    await scanAllDirect(verbose);
   } else if (args.length === 0 || args[0] === 'menu') {
     // Interactive mode
     await mainMenu();
   } else {
     console.log(chalk.gray(`  Unknown command: ${args[0]}`));
-    console.log(chalk.gray(`  Run without arguments for interactive menu, or use "start" for daemon mode.`));
+    console.log();
+    console.log(chalk.white('  Usage:'));
+    console.log(chalk.gray('    npm start              Interactive menu'));
+    console.log(chalk.gray('    npm run daemon          Start watching daemon'));
+    console.log(chalk.gray('    npm run scan            Scan & process all profiles'));
+    console.log();
+    console.log(chalk.gray('  Add --verbose / -v for debug output'));
     process.exit(1);
   }
 }
@@ -181,7 +191,92 @@ async function startDaemon(verbose: boolean): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  SCAN & PROCESS
+//  SCAN & PROCESS (direct CLI)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function scanAllDirect(verbose: boolean): Promise<void> {
+  if (verbose) logger.setLevel('debug');
+
+  const profiles = loadProfiles();
+  enableLoggingIfNeeded(profiles);
+  console.clear();
+  showBanner(profiles.length, 2);
+
+  // Mark interrupted jobs as failed & clean caches
+  const interrupted = markInterruptedJobsAsFailed();
+  if (interrupted > 0) logger.warn(`Marked ${interrupted} interrupted job(s) as failed`);
+  clearAllCaches(profiles);
+
+  let totalFiles = 0;
+  let queuedFiles = 0;
+
+  for (const profile of profiles) {
+    for (const folder of profile.sourceFolders) {
+      logger.info(`Scanning: ${folder} (profile: ${profile.name})`);
+      const files = scanFolder(folder, profile.recursive);
+      totalFiles += files.length;
+
+      for (const filePath of files) {
+        try {
+          if (hasCompletedJob(filePath)) {
+            logger.debug(`Skip: ${path.basename(filePath)} — already completed`);
+            continue;
+          }
+
+          const result = await analyzeFile(filePath, profile);
+          if (result.needsTranscode) {
+            queueFile(filePath, profile);
+            queuedFiles++;
+          } else {
+            logger.debug(`Skip: ${path.basename(filePath)} — meets criteria`);
+          }
+        } catch (err) {
+          logger.error(`Error analyzing ${filePath}: ${(err as Error).message}`);
+        }
+      }
+    }
+  }
+
+  logger.blank();
+  logger.success(`Scan complete: ${totalFiles} files found, ${queuedFiles} queued for transcoding`);
+
+  if (queuedFiles === 0) {
+    closeDb();
+    return;
+  }
+
+  // Wait for all queue workers to finish
+  await new Promise<void>((resolve) => {
+    const check = setInterval(() => {
+      const status = getQueueStatus();
+      if (status.active === 0 && status.pending === 0) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 1000);
+  });
+
+  destroyDashboard();
+  logger.blank();
+
+  // Show final stats
+  const stats = getStats();
+  const savedGB = stats.savedBytes / (1024 * 1024 * 1024);
+  const savedStr = savedGB >= 1024
+    ? `${(savedGB / 1024).toFixed(2)} TB`
+    : savedGB >= 1
+      ? `${savedGB.toFixed(2)} GB`
+      : `${(stats.savedBytes / (1024 * 1024)).toFixed(2)} MB`;
+
+  logger.success(`All done! ${stats.completed} completed, ${stats.failed} failed, ${stats.skipped} skipped`);
+  logger.success(`Total space saved: ${savedStr}`);
+
+  clearAllCaches(profiles);
+  closeDb();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SCAN & PROCESS (menu)
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function scanAndProcess(): Promise<void> {

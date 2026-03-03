@@ -8,8 +8,10 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
-    "daemon": "tsx src/cli.ts start",
-    "daemon:verbose": "tsx src/cli.ts start --verbose",
+    "daemon": "tsx src/cli.ts daemon",
+    "daemon:verbose": "tsx src/cli.ts daemon --verbose",
+    "scan": "tsx src/cli.ts scan",
+    "scan:verbose": "tsx src/cli.ts scan --verbose",
     "build": "tsc",
     "test": "vitest",
     "test:run": "vitest run",
