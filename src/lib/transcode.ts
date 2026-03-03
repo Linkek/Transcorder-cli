@@ -1,6 +1,7 @@
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'node:fs';
 import path from 'node:path';
+import { moveFile } from './utils.js';
 import { logger } from './logger.js';
 import { formatResolution, formatFileSize } from './ffmpeg.js';
 import { buildOutputFileName } from './utils.js';
@@ -103,9 +104,10 @@ export function transcode(
           '-b:v 0',
         ]);
     } else {
-      // No scale, no tonemap — shouldn't happen but handle gracefully
+      // No scale, no tonemap — re-encode only
+      // Use hwaccel for decoding but let FFmpeg handle format conversion
       cmd
-        .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+        .inputOptions(['-hwaccel', 'cuda'])
         .outputOptions([
           `-c:v hevc_nvenc`,
           `-preset ${profile.nvencPreset}`,
@@ -202,8 +204,8 @@ export function replaceOriginal(
     logger.debug(`Deleted original: ${originalPath}`);
   }
 
-  // Move cache file to original location
-  fs.renameSync(cachePath, newPath);
+  // Move cache file to original location (handles cross-device moves)
+  moveFile(cachePath, newPath);
   logger.debug(`Moved cache file to: ${newPath}`);
 
   return newPath;
