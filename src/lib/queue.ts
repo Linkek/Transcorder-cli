@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { moveFile } from './utils.js';
 import { logger } from './logger.js';
 import { analyzeFile } from './check.js';
 import { transcode, replaceOriginal } from './transcode.js';
@@ -112,7 +113,7 @@ function moveToOutput(originalPath: string, cachePath: string, profile: Profile)
   const newPath = path.join(destDir, newFileName);
 
   logger.debug(`Moving output: ${cachePath} → ${newPath}`);
-  fs.renameSync(cachePath, newPath);
+  moveFile(cachePath, newPath);
   logger.debug(`Output saved to: ${newPath}`);
 
   return newPath;

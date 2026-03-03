@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { formatResolution } from './ffmpeg.js';
 
@@ -166,4 +167,22 @@ export function cleanFileName(name: string): string {
 export function extractResolutionTag(name: string): string | null {
   const match = name.match(/[\.\-_\s]*(4k|2160p|1440p|1080p|720p|480p)/i);
   return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Move a file from source to destination, handling cross-device moves
+ * by falling back to copy + delete when fs.renameSync fails with EXDEV.
+ */
+export function moveFile(src: string, dest: string): void {
+  try {
+    fs.renameSync(src, dest);
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EXDEV') {
+      // Cross-device move: copy then delete
+      fs.copyFileSync(src, dest);
+      fs.unlinkSync(src);
+    } else {
+      throw err;
+    }
+  }
 }
