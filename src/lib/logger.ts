@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LogLevel } from '../types/index.js';
+import { isDashboardActive, dashLog } from './dashboard.js';
 
 let currentLevel: LogLevel = 'info';
 let logFile: string | null = null;
@@ -78,7 +79,7 @@ export const logger = {
   debug(message: string, ...args: unknown[]): void {
     if (LEVEL_ORDER[currentLevel] <= LEVEL_ORDER.debug) {
       const msg = formatMessage('debug', message, ...args);
-      console.log(msg);
+      if (isDashboardActive()) dashLog(msg); else console.log(msg);
       writeToFile(msg);
     }
   },
@@ -86,7 +87,7 @@ export const logger = {
   info(message: string, ...args: unknown[]): void {
     if (LEVEL_ORDER[currentLevel] <= LEVEL_ORDER.info) {
       const msg = formatMessage('info', message, ...args);
-      console.log(msg);
+      if (isDashboardActive()) dashLog(msg); else console.log(msg);
       writeToFile(msg);
     }
   },
@@ -94,14 +95,14 @@ export const logger = {
   warn(message: string, ...args: unknown[]): void {
     if (LEVEL_ORDER[currentLevel] <= LEVEL_ORDER.warn) {
       const msg = formatMessage('warn', message, ...args);
-      console.warn(msg);
+      if (isDashboardActive()) dashLog(msg); else console.warn(msg);
       writeToFile(msg);
     }
   },
 
   error(message: string, ...args: unknown[]): void {
     const msg = formatMessage('error', message, ...args);
-    console.error(msg);
+    if (isDashboardActive()) dashLog(msg); else console.error(msg);
     writeToFile(msg);
   },
 
@@ -112,19 +113,19 @@ export const logger = {
       const prefix = chalk.green('[OK ]');
       const parts = [message, ...args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a)))];
       const msg = `${ts} ${prefix} ${parts.join(' ')}`;
-      console.log(msg);
+      if (isDashboardActive()) dashLog(msg); else console.log(msg);
       writeToFile(msg);
     }
   },
 
   /** Raw console.log, no formatting */
   raw(message: string): void {
-    console.log(message);
+    if (isDashboardActive()) dashLog(message); else console.log(message);
     writeToFile(message);
   },
 
   /** Blank line */
   blank(): void {
-    console.log();
+    if (isDashboardActive()) dashLog(''); else console.log();
   },
 };

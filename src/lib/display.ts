@@ -6,6 +6,7 @@ import cliProgress from 'cli-progress';
 import type { Job, TranscodeProgress } from '../types/index.js';
 import { formatResolution, formatFileSize, formatDuration } from './ffmpeg.js';
 import { getStats } from './db.js';
+import { isDashboardActive, dashLog } from './dashboard.js';
 import path from 'node:path';
 
 // ─── Banner ─────────────────────────────────────────────────────────────────
@@ -189,12 +190,22 @@ export function showFileDetected(fileName: string, reason: string): void {
 
 export function showFileQueued(fileName: string, profileName: string): void {
   const ts = chalk.gray(new Date().toLocaleTimeString('en-GB', { hour12: false }));
-  console.log(`${ts} ${chalk.green(figures.arrowRight)} Queued: ${chalk.white(fileName)} ${chalk.gray(`(${profileName})`)}`);
+  const msg = `${ts} ${chalk.green(figures.arrowRight)} Queued: ${chalk.white(fileName)} ${chalk.gray(`(${profileName})`)}`;
+  if (isDashboardActive()) {
+    dashLog(msg);
+  } else {
+    console.log(msg);
+  }
 }
 
 export function showFileSkipped(fileName: string, reason: string): void {
   const ts = chalk.gray(new Date().toLocaleTimeString('en-GB', { hour12: false }));
-  console.log(`${ts} ${chalk.gray(figures.line)} Skip: ${chalk.gray(fileName)} — ${chalk.gray(reason)}`);
+  const msg = `${ts} ${chalk.gray(figures.line)} Skip: ${chalk.gray(fileName)} — ${chalk.gray(reason)}`;
+  if (isDashboardActive()) {
+    dashLog(msg);
+  } else {
+    console.log(msg);
+  }
 }
 
 // ─── Diagnostics ────────────────────────────────────────────────────────────

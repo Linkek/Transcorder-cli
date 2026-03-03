@@ -24,6 +24,7 @@ import {
   createProgressBar,
   updateProgressBar,
 } from './lib/display.js';
+import { destroyDashboard } from './lib/dashboard.js';
 import { showMenuLoop, showMenu, confirm, pickFromList, prompt, waitForKey } from './lib/menu.js';
 import type { Profile } from './types/index.js';
 
@@ -163,6 +164,7 @@ async function startDaemon(verbose: boolean): Promise<void> {
   // Keep alive
   await new Promise<void>((resolve) => {
     const shutdown = async () => {
+      destroyDashboard();
       logger.blank();
       logger.info('Shutting down...');
       await stopWatching(watchers);

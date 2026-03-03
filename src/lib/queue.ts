@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import chalk from 'chalk';
+import figures from 'figures';
 import { moveFile } from './utils.js';
 import { logger } from './logger.js';
 import { analyzeFile } from './check.js';
 import { transcode, replaceOriginal } from './transcode.js';
-import { formatResolution, formatFileSize } from './ffmpeg.js';
+import { formatResolution, formatFileSize, formatDuration } from './ffmpeg.js';
 import { buildOutputFileName } from './utils.js';
 import { removeCacheFile } from './cache.js';
 import {
@@ -17,18 +19,22 @@ import {
   getJobsByStatus,
 } from './db.js';
 import {
-  showTranscodeStart,
-  showTranscodeEnd,
-  showTranscodeError,
   showFileQueued,
   showFileSkipped,
-  createProgressBar,
-  updateProgressBar,
 } from './display.js';
+import {
+  initDashboard,
+  setWorker,
+  updateWorkerProgress,
+  clearWorkerAndLog,
+  clearWorker,
+  dashLog,
+  setPendingCount,
+} from './dashboard.js';
 import type { Profile } from '../types/index.js';
 
 const MAX_CONCURRENT = 2;
-let activeWorkers = 0;
+const workerSlots: boolean[] = Array(MAX_CONCURRENT).fill(false);
 let processing = false;
 
 interface QueueItem {
@@ -37,6 +43,24 @@ interface QueueItem {
 }
 
 const pendingQueue: QueueItem[] = [];
+
+function acquireSlot(): number {
+  for (let i = 0; i < MAX_CONCURRENT; i++) {
+    if (!workerSlots[i]) {
+      workerSlots[i] = true;
+      return i;
+    }
+  }
+  return -1;
+}
+
+function releaseSlot(slot: number): void {
+  workerSlots[slot] = false;
+}
+
+function activeWorkerCount(): number {
+  return workerSlots.filter(Boolean).length;
+}
 
 /**
  * Add a file to the processing queue.
@@ -65,6 +89,7 @@ export function queueFile(filePath: string, profile: Profile): void {
 
   // Sort queue by priority (higher priority first)
   pendingQueue.sort((a, b) => b.profile.priority - a.profile.priority);
+  setPendingCount(pendingQueue.length);
 
   // Kick off processing if not already running
   processNext();
@@ -74,24 +99,30 @@ export function queueFile(filePath: string, profile: Profile): void {
  * Process the next item in the queue if workers are available.
  */
 function processNext(): void {
-  if (activeWorkers >= MAX_CONCURRENT) return;
+  const slot = acquireSlot();
+  if (slot === -1) return;
 
   // First try pending items from our in-memory queue
   const item = pendingQueue.shift();
-  if (!item) return;
+  if (!item) {
+    releaseSlot(slot);
+    return;
+  }
 
-  activeWorkers++;
-  processFile(item.filePath, item.profile)
+  setPendingCount(pendingQueue.length);
+
+  // Ensure dashboard is active once we start processing
+  initDashboard();
+
+  processFile(item.filePath, item.profile, slot)
     .catch((err) => logger.error(`Queue error: ${err.message}`))
     .finally(() => {
-      activeWorkers--;
+      releaseSlot(slot);
       processNext();
     });
 
   // Try to fill remaining worker slots
-  if (activeWorkers < MAX_CONCURRENT) {
-    processNext();
-  }
+  processNext();
 }
 
 /**
@@ -122,7 +153,7 @@ function moveToOutput(originalPath: string, cachePath: string, profile: Profile)
 /**
  * Process a single file: check → transcode → place output.
  */
-async function processFile(filePath: string, profile: Profile): Promise<void> {
+async function processFile(filePath: string, profile: Profile, slot: number): Promise<void> {
   const fileName = path.basename(filePath);
   let expectedCachePath: string | undefined;
 
@@ -133,6 +164,8 @@ async function processFile(filePath: string, profile: Profile): Promise<void> {
     logger.warn(`No pending job found for: ${filePath}`);
     return;
   }
+
+  const ts = () => chalk.gray(new Date().toLocaleTimeString('en-GB', { hour12: false }));
 
   try {
     // ── Step 1: Check ─────────────────────────────────────────────────────
@@ -159,7 +192,7 @@ async function processFile(filePath: string, profile: Profile): Promise<void> {
 
     if (!checkResult.needsTranscode) {
       updateJobStatus(job.id, 'skipped');
-      showFileSkipped(fileName, checkResult.reasons.join('; '));
+      dashLog(`${ts()} ${chalk.gray(figures.line)} Skip: ${chalk.gray(fileName)} — ${chalk.gray(checkResult.reasons.join('; '))}`);
       return;
     }
 
@@ -169,7 +202,8 @@ async function processFile(filePath: string, profile: Profile): Promise<void> {
     const srcRes = formatResolution(metadata.video.width, metadata.video.height);
     const tgtRes = formatResolution(checkResult.targetWidth, checkResult.targetHeight);
 
-    showTranscodeStart(fileName, srcRes, tgtRes, metadata.isHDR, profile.removeHDR);
+    // Set up the dashboard worker slot
+    setWorker(slot, fileName, srcRes, tgtRes, metadata.isHDR, profile.removeHDR);
 
     // Compute this early so we can clean up on failure
     const hdrBeingRemoved = metadata.isHDR && profile.removeHDR;
@@ -183,20 +217,16 @@ async function processFile(filePath: string, profile: Profile): Promise<void> {
     });
     expectedCachePath = path.join(path.resolve(profile.cacheFolder), outputFileName);
 
-    const progressBar = createProgressBar();
-    progressBar.start(100, 0, { fps: '0', speed: '00:00:00' });
     const startTime = Date.now();
 
     const cachePath = await transcode(checkResult, profile, {
       onProgress: (progress) => {
-        updateProgressBar(progressBar, progress);
+        updateWorkerProgress(slot, progress);
       },
       onStart: (cmd) => {
         logger.debug(`FFmpeg started: ${cmd.slice(0, 200)}...`);
       },
     });
-
-    progressBar.stop();
 
     // ── Step 3: Check size reduction ───────────────────────────────────────
     const originalSize = metadata.fileSize;
@@ -208,7 +238,9 @@ async function processFile(filePath: string, profile: Profile): Promise<void> {
       removeCacheFile(cachePath);
       updateJobStatus(job.id, 'skipped');
       const reason = `Size reduction ${reductionPercent.toFixed(1)}% < required ${profile.minSizeReduction}%`;
-      showFileSkipped(fileName, reason);
+      clearWorkerAndLog(slot,
+        `${ts()} ${chalk.gray(figures.line)} Skip: ${chalk.gray(fileName)} — ${chalk.gray(reason)}`,
+      );
       logger.info(`${fileName}: ${reason}`);
       return;
     }
@@ -229,13 +261,17 @@ async function processFile(filePath: string, profile: Profile): Promise<void> {
 
     updateJobStatus(job.id, 'completed', { outputPath });
 
-    showTranscodeEnd(fileName, outputSize, elapsed);
+    clearWorkerAndLog(slot,
+      `${ts()} ${chalk.green(figures.tick)} Done: ${chalk.white(fileName)} ${chalk.gray(`(${formatFileSize(outputSize)}, ${formatDuration(elapsed)})`)}`,
+    );
     logger.success(`${fileName} → ${path.basename(outputPath)} (${formatFileSize(outputSize)})`);
 
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     updateJobStatus(job.id, 'failed', { error: errMsg });
-    showTranscodeError(fileName, errMsg);
+    clearWorkerAndLog(slot,
+      `${ts()} ${chalk.red(figures.cross)} Error: ${chalk.white(fileName)} — ${chalk.red(errMsg)}`,
+    );
 
     // Clean up partial cache file on failure
     if (expectedCachePath) {
@@ -272,7 +308,7 @@ export function resumePendingJobs(profiles: Profile[]): void {
  */
 export function getQueueStatus(): { active: number; pending: number } {
   return {
-    active: activeWorkers,
+    active: activeWorkerCount(),
     pending: pendingQueue.length,
   };
 }
