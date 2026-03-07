@@ -108,17 +108,19 @@ export function transcode(
           '-pix_fmt yuv420p',
         ]);
     } else if (needsScale) {
-      // Scale path — use CUDA hardware decode with CPU scaling
-      // Using CPU scale instead of scale_cuda for maximum codec/format compatibility.
-      // CUDA decode auto-downloads frames to system memory; NVENC re-uploads for encoding.
+      // Scale path — GPU decode + GPU scale + explicit download for encoder compatibility
+      // scale_cuda runs entirely in VRAM (fast), then hwdownload brings the smaller
+      // (already downscaled) frames to CPU for NVENC. This avoids the auto_scaler
+      // format negotiation failures while keeping scaling on the GPU.
       // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
       // force_divisible_by=2 ensures even dimensions (required by encoders)
 
       cmd
-        .inputOptions(['-hwaccel', 'cuda'])
+        .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
         .videoFilters([
-          `scale=${targetWidth}:${targetHeight}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-          'format=yuv420p',
+          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+          'hwdownload',
+          'format=nv12',
         ])
         .outputOptions([
           `-c:v hevc_nvenc`,
