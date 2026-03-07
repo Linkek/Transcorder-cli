@@ -3,14 +3,13 @@ import session from 'express-session';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
-import { logger } from './logger.js';
+import { logger, getLogEntries, subscribeToLogs } from './logger.js';
 import { loadProfiles } from './profiles.js';
 import { getWorkerStates } from './dashboard.js';
 import {
   getAllJobs,
   getStats,
   deleteJob,
-  clearFailedJobForFile,
   getJobsByStatus,
   clearJobs,
 } from './db.js';
@@ -196,8 +195,7 @@ function createApp(config: GlobalConfig): express.Express {
         return;
       }
 
-      // Clear the failed job and re-queue
-      clearFailedJobForFile(job.sourcePath);
+      // Re-queue the file (old failed job is preserved as history)
       queueFile(job.sourcePath, profile);
       res.json({ ok: true });
     } catch (err) {
@@ -240,6 +238,47 @@ function createApp(config: GlobalConfig): express.Express {
   app.get('/api/profiles', (_req, res) => {
     const profiles = getProfiles();
     res.json(profiles);
+  });
+
+  // ─── Logs ───────────────────────────────────────────────────────────────
+
+  /** Get recent log entries (polling fallback). */
+  app.get('/api/logs', (req, res) => {
+    const afterId = parseInt(req.query.after as string) || 0;
+    const limit = parseInt(req.query.limit as string) || 200;
+    const entries = getLogEntries(afterId, limit);
+    res.json(entries);
+  });
+
+  /** SSE stream of log entries in real-time. */
+  app.get('/api/logs/stream', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.write('\n');
+
+    // Send recent history first
+    const recent = getLogEntries(0, 200);
+    for (const entry of recent) {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    }
+
+    // Subscribe to new entries
+    const unsubscribe = subscribeToLogs((entry) => {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    });
+
+    // Keep-alive ping every 30s
+    const keepAlive = setInterval(() => {
+      res.write(': ping\n\n');
+    }, 30000);
+
+    req.on('close', () => {
+      unsubscribe();
+      clearInterval(keepAlive);
+    });
   });
 
   // ─── Serve static frontend ─────────────────────────────────────────────

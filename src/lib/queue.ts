@@ -16,7 +16,6 @@ import {
   updateJobStatus,
   hasActiveJob,
   hasCompletedJob,
-  clearFailedJobForFile,
   getJobsByStatus,
 } from './db.js';
 import {
@@ -93,9 +92,6 @@ export function queueFile(filePath: string, profile: Profile): void {
     logger.debug(`Already completed: ${filePath}`);
     return;
   }
-
-  // Clear any previous failed jobs for this file (allows retry)
-  clearFailedJobForFile(filePath);
 
   const fileName = path.basename(filePath);
   const jobId = addJob(filePath, profile.name, profile.priority);

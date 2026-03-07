@@ -137,3 +137,15 @@ export interface Profile {
 }
 
 export const getProfiles = () => request<Profile[]>('/profiles');
+
+// ─── Logs ───────────────────────────────────────────────────────────────────
+
+export interface LogEntry {
+  id: number;
+  timestamp: string;
+  level: 'debug' | 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
+export const getLogs = (afterId = 0, limit = 200) =>
+  request<LogEntry[]>(`/logs?after=${afterId}&limit=${limit}`);

@@ -8,6 +8,52 @@ let currentLevel: LogLevel = 'info';
 let logFile: string | null = null;
 let logStream: fs.WriteStream | null = null;
 
+// ─── In-memory log buffer for web UI streaming ─────────────────────────────
+
+export interface LogEntry {
+  id: number;
+  timestamp: string;
+  level: 'debug' | 'info' | 'warn' | 'error' | 'success';
+  message: string;
+}
+
+const LOG_BUFFER_MAX = 1000;
+const logBuffer: LogEntry[] = [];
+let logIdCounter = 0;
+
+type LogSubscriber = (entry: LogEntry) => void;
+const subscribers = new Set<LogSubscriber>();
+
+function addToBuffer(level: LogEntry['level'], rawMessage: string): void {
+  const entry: LogEntry = {
+    id: ++logIdCounter,
+    timestamp: new Date().toISOString(),
+    level,
+    message: stripAnsi(rawMessage),
+  };
+  logBuffer.push(entry);
+  if (logBuffer.length > LOG_BUFFER_MAX) {
+    logBuffer.splice(0, logBuffer.length - LOG_BUFFER_MAX);
+  }
+  for (const sub of subscribers) {
+    try { sub(entry); } catch { /* ignore broken subscribers */ }
+  }
+}
+
+/** Get recent log entries, optionally starting after a given ID. */
+export function getLogEntries(afterId = 0, limit = 200): LogEntry[] {
+  if (afterId > 0) {
+    return logBuffer.filter(e => e.id > afterId).slice(-limit);
+  }
+  return logBuffer.slice(-limit);
+}
+
+/** Subscribe to new log entries (for SSE). Returns unsubscribe function. */
+export function subscribeToLogs(callback: LogSubscriber): () => void {
+  subscribers.add(callback);
+  return () => { subscribers.delete(callback); };
+}
+
 const LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -81,6 +127,7 @@ export const logger = {
       const msg = formatMessage('debug', message, ...args);
       if (isDashboardActive()) dashLog(msg); else console.log(msg);
       writeToFile(msg);
+      addToBuffer('debug', msg);
     }
   },
 
@@ -89,6 +136,7 @@ export const logger = {
       const msg = formatMessage('info', message, ...args);
       if (isDashboardActive()) dashLog(msg); else console.log(msg);
       writeToFile(msg);
+      addToBuffer('info', msg);
     }
   },
 
@@ -97,6 +145,7 @@ export const logger = {
       const msg = formatMessage('warn', message, ...args);
       if (isDashboardActive()) dashLog(msg); else console.warn(msg);
       writeToFile(msg);
+      addToBuffer('warn', msg);
     }
   },
 
@@ -104,6 +153,7 @@ export const logger = {
     const msg = formatMessage('error', message, ...args);
     if (isDashboardActive()) dashLog(msg); else console.error(msg);
     writeToFile(msg);
+    addToBuffer('error', msg);
   },
 
   /** Log a success message (always shown at info level) */
@@ -115,6 +165,7 @@ export const logger = {
       const msg = `${ts} ${prefix} ${parts.join(' ')}`;
       if (isDashboardActive()) dashLog(msg); else console.log(msg);
       writeToFile(msg);
+      addToBuffer('success', msg);
     }
   },
 

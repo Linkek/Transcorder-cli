@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import path from 'node:path';
 import { logger } from '../lib/logger.js';
 import { loadProfiles, loadGlobalConfig } from '../lib/profiles.js';
-import { closeDb, getStats, hasCompletedJob, markInterruptedJobsAsFailed } from '../lib/db.js';
+import { closeDb, getStats, hasCompletedJob, hasFailedJob, markInterruptedJobsAsFailed } from '../lib/db.js';
 import { analyzeFile } from '../lib/check.js';
 import { queueFile, resumePendingJobs, pauseQueue, resumeQueue, isQueuePaused, reinitWorkerSlots } from '../lib/queue.js';
 import { startWatching, stopWatching, scanFolder } from '../lib/watcher.js';
@@ -92,6 +92,11 @@ export async function startDaemon(verbose: boolean): Promise<void> {
         try {
           if (hasCompletedJob(filePath)) {
             logger.debug(`Skip: ${path.basename(filePath)} — already completed`);
+            continue;
+          }
+
+          if (hasFailedJob(filePath)) {
+            logger.debug(`Skip: ${path.basename(filePath)} — previously failed (retry from UI)`);
             continue;
           }
 

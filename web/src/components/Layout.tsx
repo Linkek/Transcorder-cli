@@ -15,9 +15,11 @@ import LogoutIcon from '@mui/icons-material/Logout'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import ListAltIcon from '@mui/icons-material/ListAlt'
 import TuneIcon from '@mui/icons-material/Tune'
+import TerminalIcon from '@mui/icons-material/Terminal'
 import Dashboard from './Dashboard'
 import JobsTable from './JobsTable'
 import ProfilesView from './ProfilesView'
+import LogsView from './LogsView'
 import { logout } from '../api'
 import { tokens } from '../theme'
 
@@ -94,6 +96,12 @@ export default function Layout({ username, onLogout }: LayoutProps) {
               label={isMobile ? undefined : 'Profiles'}
               sx={{ minWidth: isMobile ? 48 : undefined }}
             />
+            <Tab
+              icon={<TerminalIcon fontSize="small" />}
+              iconPosition="start"
+              label={isMobile ? undefined : 'Logs'}
+              sx={{ minWidth: isMobile ? 48 : undefined }}
+            />
           </Tabs>
 
           {!isMobile && (
@@ -131,6 +139,9 @@ export default function Layout({ username, onLogout }: LayoutProps) {
         </Box>
         <Box sx={{ display: tab === 2 ? 'block' : 'none' }}>
           <ProfilesView />
+        </Box>
+        <Box sx={{ display: tab === 3 ? 'block' : 'none' }}>
+          <LogsView />
         </Box>
       </Box>
     </Box>

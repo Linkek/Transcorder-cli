@@ -349,6 +349,15 @@ export function hasCompletedJob(sourcePath: string): boolean {
   return row.cnt > 0;
 }
 
+export function hasFailedJob(sourcePath: string): boolean {
+  const d = getDb();
+  const row = d.prepare(`
+    SELECT COUNT(*) as cnt FROM jobs
+    WHERE source_path = ? AND status = 'failed'
+  `).get(sourcePath) as { cnt: number };
+  return row.cnt > 0;
+}
+
 /**
  * Clear any failed jobs for a specific file (to allow retry).
  */
