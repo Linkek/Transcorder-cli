@@ -108,20 +108,17 @@ export function transcode(
           '-pix_fmt yuv420p',
         ]);
     } else if (needsScale) {
-      // Scale only — use CUDA hardware scaling
+      // Scale path — use CUDA hardware decode with CPU scaling
+      // Using CPU scale instead of scale_cuda for maximum codec/format compatibility.
+      // CUDA decode auto-downloads frames to system memory; NVENC re-uploads for encoding.
       // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
       // force_divisible_by=2 ensures even dimensions (required by encoders)
-      const is10bit = metadata.video.pix_fmt &&
-        (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
-
-      // Specify output format directly in scale_cuda to avoid auto_scaler insertion
-      // (ffmpeg can't auto-convert between CUDA formats, so we must be explicit)
-      const scaleFormat = is10bit ? 'p010le' : 'nv12';
 
       cmd
-        .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+        .inputOptions(['-hwaccel', 'cuda'])
         .videoFilters([
-          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2:format=${scaleFormat}`,
+          `scale=${targetWidth}:${targetHeight}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+          'format=yuv420p',
         ])
         .outputOptions([
           `-c:v hevc_nvenc`,
