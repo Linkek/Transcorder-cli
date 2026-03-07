@@ -54,6 +54,15 @@ export function subscribeToLogs(callback: LogSubscriber): () => void {
   return () => { subscribers.delete(callback); };
 }
 
+/**
+ * Emit a log entry to the web UI buffer from outside the logger
+ * (e.g. from dashLog, display helpers, queue messages).
+ * The message should be the raw chalk-formatted string — ANSI codes will be stripped.
+ */
+export function emitLogEntry(level: LogEntry['level'], message: string): void {
+  addToBuffer(level, message);
+}
+
 const LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -125,35 +134,31 @@ export const logger = {
   debug(message: string, ...args: unknown[]): void {
     if (LEVEL_ORDER[currentLevel] <= LEVEL_ORDER.debug) {
       const msg = formatMessage('debug', message, ...args);
-      if (isDashboardActive()) dashLog(msg); else console.log(msg);
+      if (isDashboardActive()) dashLog(msg); else { console.log(msg); addToBuffer('debug', msg); }
       writeToFile(msg);
-      addToBuffer('debug', msg);
     }
   },
 
   info(message: string, ...args: unknown[]): void {
     if (LEVEL_ORDER[currentLevel] <= LEVEL_ORDER.info) {
       const msg = formatMessage('info', message, ...args);
-      if (isDashboardActive()) dashLog(msg); else console.log(msg);
+      if (isDashboardActive()) dashLog(msg); else { console.log(msg); addToBuffer('info', msg); }
       writeToFile(msg);
-      addToBuffer('info', msg);
     }
   },
 
   warn(message: string, ...args: unknown[]): void {
     if (LEVEL_ORDER[currentLevel] <= LEVEL_ORDER.warn) {
       const msg = formatMessage('warn', message, ...args);
-      if (isDashboardActive()) dashLog(msg); else console.warn(msg);
+      if (isDashboardActive()) dashLog(msg); else { console.warn(msg); addToBuffer('warn', msg); }
       writeToFile(msg);
-      addToBuffer('warn', msg);
     }
   },
 
   error(message: string, ...args: unknown[]): void {
     const msg = formatMessage('error', message, ...args);
-    if (isDashboardActive()) dashLog(msg); else console.error(msg);
+    if (isDashboardActive()) dashLog(msg); else { console.error(msg); addToBuffer('error', msg); }
     writeToFile(msg);
-    addToBuffer('error', msg);
   },
 
   /** Log a success message (always shown at info level) */
@@ -163,9 +168,8 @@ export const logger = {
       const prefix = chalk.green('[OK ]');
       const parts = [message, ...args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a)))];
       const msg = `${ts} ${prefix} ${parts.join(' ')}`;
-      if (isDashboardActive()) dashLog(msg); else console.log(msg);
+      if (isDashboardActive()) dashLog(msg); else { console.log(msg); addToBuffer('success', msg); }
       writeToFile(msg);
-      addToBuffer('success', msg);
     }
   },
 

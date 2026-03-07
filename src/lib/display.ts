@@ -8,6 +8,7 @@ import { formatResolution } from './ffmpeg.js';
 import { formatFileSize, formatDuration } from './utils.js';
 import { getStats } from './db.js';
 import { isDashboardActive, dashLog } from './dashboard.js';
+import { emitLogEntry } from './logger.js';
 import path from 'node:path';
 
 // ─── Banner ─────────────────────────────────────────────────────────────────
@@ -156,6 +157,8 @@ export function updateProgressBar(bar: cliProgress.SingleBar, progress: Transcod
 
 export function showTranscodeStart(fileName: string, srcRes: string, targetRes: string, hdr: boolean, removeHDR: boolean): void {
   const hdrTag = hdr ? (removeHDR ? chalk.yellow(' HDR→SDR') : chalk.cyan(' HDR')) : '';
+  const msg = `Transcoding: ${fileName} (${srcRes} → ${targetRes}${hdrTag ? hdrTag : ''})`;
+  emitLogEntry('info', msg);
   console.log();
   console.log(
     chalk.gray('  ┌─') +
@@ -175,6 +178,7 @@ export function showTranscodeStart(fileName: string, srcRes: string, targetRes: 
 }
 
 export function showTranscodeEnd(fileName: string, outputSize: number, duration: number): void {
+  emitLogEntry('success', `Done: ${fileName} (${formatFileSize(outputSize)}, ${formatDuration(duration)})`);
   console.log(
     chalk.gray('  │ ') +
     chalk.green(figures.tick) +
@@ -186,6 +190,7 @@ export function showTranscodeEnd(fileName: string, outputSize: number, duration:
 }
 
 export function showTranscodeError(fileName: string, error: string): void {
+  emitLogEntry('error', `Error: ${fileName} — ${error}`);
   console.log(
     chalk.gray('  │ ') +
     chalk.red(figures.cross) +
@@ -199,6 +204,7 @@ export function showTranscodeError(fileName: string, error: string): void {
 
 export function showFileDetected(fileName: string, reason: string): void {
   const ts = chalk.gray(new Date().toLocaleTimeString('en-GB', { hour12: false }));
+  emitLogEntry('info', `New file: ${fileName} — ${reason}`);
   console.log(`${ts} ${chalk.cyan(figures.info)} New file: ${chalk.white(fileName)}`);
   console.log(`${ts} ${chalk.cyan(figures.info)} ${chalk.gray(reason)}`);
 }
@@ -209,6 +215,7 @@ export function showFileQueued(fileName: string, profileName: string): void {
   if (isDashboardActive()) {
     dashLog(msg);
   } else {
+    emitLogEntry('info', msg);
     console.log(msg);
   }
 }
@@ -219,6 +226,7 @@ export function showFileSkipped(fileName: string, reason: string): void {
   if (isDashboardActive()) {
     dashLog(msg);
   } else {
+    emitLogEntry('info', msg);
     console.log(msg);
   }
 }

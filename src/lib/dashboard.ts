@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import figures from 'figures';
 import type { TranscodeProgress } from '../types/index.js';
 import { formatDuration, formatFileSize } from './utils.js';
+import { emitLogEntry } from './logger.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,10 @@ export function isDashboardActive(): boolean {
  * When inactive it falls through to plain console.log.
  */
 export function dashLog(message: string): void {
+  // Emit to web UI log buffer (skip empty lines)
+  if (message.trim()) {
+    emitLogEntry('info', message);
+  }
   if (!active) {
     console.log(message);
     return;
@@ -174,6 +179,10 @@ export function updateWorkerProgress(slot: number, progress: TranscodeProgress):
  */
 export function clearWorkerAndLog(slot: number, message: string): void {
   workers[slot] = null;
+  // Emit to web UI log buffer
+  if (message.trim()) {
+    emitLogEntry('info', message);
+  }
   if (!active) {
     console.log(message);
     return;
