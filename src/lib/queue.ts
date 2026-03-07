@@ -47,6 +47,7 @@ const activeTranscodes = new Map<number, { handle: TranscodeHandle; jobId: numbe
 interface QueueItem {
   filePath: string;
   profile: Profile;
+  priority: number;
 }
 
 const pendingQueue: QueueItem[] = [];
@@ -89,13 +90,13 @@ export function queueFile(filePath: string, profile: Profile): void {
   clearFailedJobForFile(filePath);
 
   const fileName = path.basename(filePath);
-  const jobId = addJob(filePath, profile.name);
+  const jobId = addJob(filePath, profile.name, profile.priority);
   showFileQueued(fileName, profile.name);
 
-  pendingQueue.push({ filePath, profile });
+  pendingQueue.push({ filePath, profile, priority: profile.priority });
 
   // Sort queue by priority (higher priority first)
-  pendingQueue.sort((a, b) => b.profile.priority - a.profile.priority);
+  pendingQueue.sort((a, b) => b.priority - a.priority);
   setPendingCount(pendingQueue.length);
 
   // Kick off processing if not already running
@@ -379,8 +380,11 @@ export function resumePendingJobs(profiles: Profile[]): void {
       continue;
     }
 
-    pendingQueue.push({ filePath: job.sourcePath, profile });
+    pendingQueue.push({ filePath: job.sourcePath, profile, priority: job.priority });
   }
+
+  // Sort by stored priority (higher first)
+  pendingQueue.sort((a, b) => b.priority - a.priority);
 
   processNext();
 }

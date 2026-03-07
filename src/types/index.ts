@@ -127,6 +127,7 @@ export interface Job {
   outputPath: string | null;
   status: JobStatus;
   profileName: string;
+  priority: number;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;

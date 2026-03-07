@@ -31,6 +31,7 @@ function initSchema(): void {
       output_path TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       profile_name TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 5,
       created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
       started_at TEXT,
       completed_at TEXT,
@@ -93,6 +94,11 @@ function initSchema(): void {
     d.exec("ALTER TABLE jobs ADD COLUMN saved_bytes INTEGER DEFAULT 0");
   }
 
+  // Migration: add priority column if missing (for existing DBs)
+  if (!cols.some((c) => c.name === 'priority')) {
+    d.exec("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 5");
+  }
+
   // Migration: add new source_metadata columns if missing (for existing DBs)
   const srcCols = d.prepare("PRAGMA table_info(source_metadata)").all() as { name: string }[];
   const srcMigrations: [string, string][] = [
@@ -136,12 +142,12 @@ function initSchema(): void {
 
 // ─── Job CRUD ───────────────────────────────────────────────────────────────
 
-export function addJob(sourcePath: string, profileName: string): number {
+export function addJob(sourcePath: string, profileName: string, priority: number = 5): number {
   const d = getDb();
   try {
     const result = d.prepare(`
-      INSERT INTO jobs (source_path, profile_name) VALUES (?, ?)
-    `).run(sourcePath, profileName);
+      INSERT INTO jobs (source_path, profile_name, priority) VALUES (?, ?, ?)
+    `).run(sourcePath, profileName, priority);
     logger.debug(`Added job #${result.lastInsertRowid} for ${sourcePath}`);
     return Number(result.lastInsertRowid);
   } catch (err: unknown) {
@@ -289,12 +295,12 @@ export function getJobsByStatus(...statuses: JobStatus[]): Job[] {
   const placeholders = statuses.map(() => '?').join(', ');
   return d.prepare(`
     SELECT j.id, j.source_path as sourcePath, j.output_path as outputPath, j.status, j.profile_name as profileName,
-           j.created_at as createdAt, j.started_at as startedAt, j.completed_at as completedAt, j.error,
+           j.priority, j.created_at as createdAt, j.started_at as startedAt, j.completed_at as completedAt, j.error,
            m.width, m.height, m.is_hdr as isHDR, m.codec, m.duration_seconds as duration, m.file_size_bytes as fileSize
     FROM jobs j
     LEFT JOIN source_metadata m ON m.job_id = j.id
     WHERE j.status IN (${placeholders})
-    ORDER BY j.created_at ASC
+    ORDER BY j.priority DESC, j.created_at ASC
   `).all(...statuses) as Job[];
 }
 
@@ -302,7 +308,7 @@ export function getAllJobs(limit = 50): Job[] {
   const d = getDb();
   return d.prepare(`
     SELECT j.id, j.source_path as sourcePath, j.output_path as outputPath, j.status, j.profile_name as profileName,
-           j.created_at as createdAt, j.started_at as startedAt, j.completed_at as completedAt, j.error,
+           j.priority, j.created_at as createdAt, j.started_at as startedAt, j.completed_at as completedAt, j.error,
            m.width, m.height, m.is_hdr as isHDR, m.codec, m.duration_seconds as duration, m.file_size_bytes as fileSize
     FROM jobs j
     LEFT JOIN source_metadata m ON m.job_id = j.id
@@ -315,7 +321,7 @@ export function getJobByPath(sourcePath: string): Job | undefined {
   const d = getDb();
   return d.prepare(`
     SELECT j.id, j.source_path as sourcePath, j.output_path as outputPath, j.status, j.profile_name as profileName,
-           j.created_at as createdAt, j.started_at as startedAt, j.completed_at as completedAt, j.error,
+           j.priority, j.created_at as createdAt, j.started_at as startedAt, j.completed_at as completedAt, j.error,
            m.width, m.height, m.is_hdr as isHDR, m.codec, m.duration_seconds as duration, m.file_size_bytes as fileSize
     FROM jobs j
     LEFT JOIN source_metadata m ON m.job_id = j.id
