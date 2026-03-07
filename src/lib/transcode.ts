@@ -111,6 +111,9 @@ export function transcode(
       // Scale only — use CUDA hardware scaling
       // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
       // force_divisible_by=2 ensures even dimensions (required by encoders)
+      const is10bit = metadata.video.pix_fmt &&
+        (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+
       cmd
         .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
         .videoFilters([
@@ -123,12 +126,16 @@ export function transcode(
           `-rc:v vbr`,
           `-cq:v ${profile.cqValue}`,
           '-b:v 0',
+          ...(is10bit ? ['-pix_fmt p010le'] : []),
         ]);
     } else {
       // No scale, no tonemap — re-encode only
-      // Use hwaccel for decoding but let FFmpeg handle format conversion
+      // Keep frames on GPU to avoid CPU-side pixel format conversion issues
+      const is10bit = metadata.video.pix_fmt &&
+        (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+
       cmd
-        .inputOptions(['-hwaccel', 'cuda'])
+        .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
         .outputOptions([
           `-c:v hevc_nvenc`,
           `-preset ${profile.nvencPreset}`,
@@ -136,6 +143,7 @@ export function transcode(
           `-rc:v vbr`,
           `-cq:v ${profile.cqValue}`,
           '-b:v 0',
+          ...(is10bit ? ['-pix_fmt p010le'] : []),
         ]);
     }
 
