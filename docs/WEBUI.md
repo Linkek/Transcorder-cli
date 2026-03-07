@@ -1,6 +1,6 @@
 # Web UI
 
-Transcorder includes an optional web dashboard for monitoring and controlling the daemon remotely.
+TranscoRder includes an optional web dashboard for monitoring and controlling the daemon remotely.
 
 ## Enabling the Web UI
 

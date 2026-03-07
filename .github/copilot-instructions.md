@@ -1,8 +1,8 @@
-# Transcorder — AI Coding Instructions
+# TranscoRder — AI Coding Instructions
 
 ## Project Overview
 
-Transcorder is a **TypeScript CLI video transcoding daemon** (v1.2.1) that batch-converts video files using NVIDIA NVENC GPU encoding. It has two main surfaces:
+TranscoRder is a **TypeScript CLI video transcoding daemon** (v1.2.1) that batch-converts video files using NVIDIA NVENC GPU encoding. It has two main surfaces:
 
 1. **CLI / Daemon** — Node.js backend (`src/`) written in TypeScript, runs via `tsx`
 2. **Web UI** — React 19 SPA (`web/`) using MUI v6, served by the backend Express 5 server

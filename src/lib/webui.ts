@@ -295,7 +295,7 @@ function createApp(config: GlobalConfig): express.Express {
       res.send(`
         <html>
           <body style="font-family: sans-serif; padding: 2rem; background: #1a1a2e; color: #e0e0e0;">
-            <h1>Transcorder Web UI</h1>
+            <h1>TranscoRder Web UI</h1>
             <p>Frontend not built. Run <code>cd web && npm run build</code> to build the dashboard.</p>
             <p>API is available at <code>/api/*</code></p>
           </body>

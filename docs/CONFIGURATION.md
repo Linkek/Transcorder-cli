@@ -1,6 +1,6 @@
 # Configuration
 
-Transcorder is configured via `config/profiles.json`. Copy the example to get started:
+TranscoRder is configured via `config/profiles.json`. Copy the example to get started:
 
 ```sh
 cp config/profiles.example.json config/profiles.json

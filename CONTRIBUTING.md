@@ -1,4 +1,4 @@
-# Contributing to Transcorder
+# Contributing to TranscoRder
 
 Thanks for considering contributing! This guide will get you up and running quickly.
 

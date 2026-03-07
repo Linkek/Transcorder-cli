@@ -7,6 +7,7 @@
     "transcorder": "./dist/cli.js"
   },
   "scripts": {
+    "setup": "npm install && cd web && npm install && npm run build && cd .. && node -e \"const fs=require('fs');if(!fs.existsSync('config/profiles.json')){fs.copyFileSync('config/profiles.example.json','config/profiles.json');console.log('Created config/profiles.json from example')}else{console.log('config/profiles.json already exists')}\"",
     "start": "tsx src/cli.ts",
     "daemon": "tsx src/cli.ts daemon",
     "daemon:verbose": "tsx src/cli.ts daemon --verbose",

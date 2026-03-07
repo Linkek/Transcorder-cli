@@ -61,8 +61,19 @@ export default function Login({ onLogin }: LoginProps) {
             >
               <LockOutlinedIcon />
             </Box>
-            <Typography variant="h5" fontWeight={700}>
-              Transcorder
+            <Typography
+              variant="h5"
+              sx={{
+                background: `linear-gradient(135deg, ${tokens.primary}, ${tokens.secondary})`,
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                fontWeight: 800,
+                letterSpacing: '-0.03em',
+                mr: 1,
+                fontSize: { xs: '1rem', sm: '1.25rem' },
+              }}
+            >
+            TranscoRder
             </Typography>
             <Typography variant="body2" color="text.secondary" mt={0.5}>
               Sign in to the dashboard

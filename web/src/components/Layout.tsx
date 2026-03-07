@@ -62,7 +62,7 @@ export default function Layout({ username, onLogout }: LayoutProps) {
               fontSize: { xs: '1rem', sm: '1.25rem' },
             }}
           >
-            Transcorder
+            TranscoRder
           </Typography>
 
           <Tabs
