@@ -114,10 +114,14 @@ export function transcode(
       const is10bit = metadata.video.pix_fmt &&
         (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
 
+      // Specify output format directly in scale_cuda to avoid auto_scaler insertion
+      // (ffmpeg can't auto-convert between CUDA formats, so we must be explicit)
+      const scaleFormat = is10bit ? 'p010le' : 'nv12';
+
       cmd
         .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
         .videoFilters([
-          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2:format=${scaleFormat}`,
         ])
         .outputOptions([
           `-c:v hevc_nvenc`,
@@ -126,7 +130,6 @@ export function transcode(
           `-rc:v vbr`,
           `-cq:v ${profile.cqValue}`,
           '-b:v 0',
-          ...(is10bit ? ['-pix_fmt p010le'] : []),
         ]);
     } else {
       // No scale, no tonemap — re-encode only
