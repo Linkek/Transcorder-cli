@@ -13,6 +13,8 @@ export interface GlobalConfig {
   localAllow: boolean;
   /** If true, the queue starts paused on daemon startup (default: false) */
   pauseOnStartup: boolean;
+  /** Number of concurrent transcode workers (default: 2) */
+  workers: number;
 }
 
 export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
@@ -22,6 +24,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   webuiPassword: 'transcorder',
   localAllow: true,
   pauseOnStartup: false,
+  workers: 2,
 };
 
 // ─── Profile Configuration ───────────────────────────────────────────────────

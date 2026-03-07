@@ -23,7 +23,7 @@ interface DashboardStats {
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
-export const NUM_WORKERS = 2;
+let NUM_WORKERS = 2;
 const workers: (WorkerState | null)[] = Array(NUM_WORKERS).fill(null);
 let active = false;
 let renderedLines = 0;
@@ -39,6 +39,22 @@ const RENDER_INTERVAL = 150; // ms between progress-only re-renders
 /**
  * Activate the dashboard. After this, all output should go through dashLog().
  */
+/**
+ * Set the number of worker slots. Must be called before initDashboard().
+ */
+export function setNumWorkers(count: number): void {
+  NUM_WORKERS = count;
+  // Resize the workers array
+  workers.length = count;
+  for (let i = 0; i < count; i++) {
+    if (workers[i] === undefined) workers[i] = null;
+  }
+}
+
+export function getNumWorkers(): number {
+  return NUM_WORKERS;
+}
+
 export function initDashboard(): void {
   if (active) return;
   active = true;
@@ -176,6 +192,31 @@ export function clearWorker(slot: number): void {
     clearRendered();
     render();
   }
+}
+
+/**
+ * Get the current worker states for the API.
+ */
+export function getWorkerStates(): { slot: number; idle: boolean; fileName?: string; srcRes?: string; targetRes?: string; hdr?: boolean; removeHDR?: boolean; progress?: { percent: number; fps: number; speed: number; eta: number; currentSize: number; timemark: string } | null }[] {
+  const result = [];
+  for (let i = 0; i < NUM_WORKERS; i++) {
+    const w = workers[i];
+    if (w) {
+      result.push({
+        slot: i,
+        idle: false,
+        fileName: w.fileName,
+        srcRes: w.srcRes,
+        targetRes: w.targetRes,
+        hdr: w.hdr,
+        removeHDR: w.removeHDR,
+        progress: w.progress,
+      });
+    } else {
+      result.push({ slot: i, idle: true });
+    }
+  }
+  return result;
 }
 
 // ─── Internal rendering ────────────────────────────────────────────────────

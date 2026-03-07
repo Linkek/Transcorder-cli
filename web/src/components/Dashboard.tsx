@@ -19,7 +19,10 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import PauseIcon from '@mui/icons-material/Pause'
 import StorageIcon from '@mui/icons-material/Storage'
 import SpeedIcon from '@mui/icons-material/Speed'
-import { getStats, pauseQueue, resumeQueue } from '../api'
+import MemoryIcon from '@mui/icons-material/Memory'
+import HdrAutoIcon from '@mui/icons-material/HdrAuto'
+import { getStats, getWorkers, pauseQueue, resumeQueue } from '../api'
+import type { WorkerState } from '../api'
 import { tokens, sectionBox, pageHeaderSx } from '../theme'
 
 function formatBytes(bytes: number): string {
@@ -89,9 +92,155 @@ function StatCard({ title, value, icon, color, subtitle }: StatCardProps) {
   )
 }
 
+function WorkerCard({ worker }: { worker: WorkerState }) {
+  const percent = worker.progress?.percent ?? 0
+  const isActive = !worker.idle && worker.fileName
+
+  return (
+    <Card
+      sx={{
+        bgcolor: tokens.bgSurface,
+        position: 'relative',
+        overflow: 'hidden',
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 3,
+          background: isActive ? tokens.primary : tokens.borderColorLight,
+          opacity: isActive ? 0.7 : 0.3,
+        },
+      }}
+    >
+      <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={isActive ? 1.5 : 0}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Box sx={{ color: isActive ? tokens.primary : tokens.textMuted, opacity: isActive ? 1 : 0.4, display: 'flex' }}>
+              <MemoryIcon fontSize="small" />
+            </Box>
+            <Typography variant="body2" fontWeight={600} sx={{ color: isActive ? tokens.textPrimary : tokens.textMuted }}>
+              Worker {worker.slot + 1}
+            </Typography>
+            {isActive && worker.hdr && (
+              <Chip
+                icon={<HdrAutoIcon />}
+                label={worker.removeHDR ? 'HDR→SDR' : 'HDR'}
+                size="small"
+                sx={{
+                  height: 20,
+                  fontSize: '0.65rem',
+                  bgcolor: worker.removeHDR ? 'rgba(255, 167, 38, 0.15)' : 'rgba(0, 229, 255, 0.15)',
+                  color: worker.removeHDR ? tokens.warning : tokens.secondary,
+                  '& .MuiChip-icon': { fontSize: 14, color: 'inherit' },
+                }}
+              />
+            )}
+          </Stack>
+          {isActive ? (
+            <Chip
+              label="Active"
+              size="small"
+              sx={{
+                height: 20,
+                fontSize: '0.65rem',
+                fontWeight: 600,
+                bgcolor: 'rgba(124, 77, 255, 0.15)',
+                color: tokens.primary,
+              }}
+            />
+          ) : (
+            <Chip
+              label="Idle"
+              size="small"
+              sx={{
+                height: 20,
+                fontSize: '0.65rem',
+                fontWeight: 600,
+                bgcolor: 'rgba(148, 163, 184, 0.1)',
+                color: tokens.textMuted,
+              }}
+            />
+          )}
+        </Box>
+
+        {isActive && (
+          <>
+            <Typography
+              variant="body2"
+              sx={{
+                color: tokens.textPrimary,
+                fontSize: '0.8rem',
+                mb: 0.5,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {worker.fileName}
+            </Typography>
+
+            <Typography variant="caption" sx={{ color: tokens.textMuted, display: 'block', mb: 1.5 }}>
+              {worker.srcRes} → {worker.targetRes}
+            </Typography>
+
+            <Box sx={{ mb: 1 }}>
+              <LinearProgress
+                variant="determinate"
+                value={percent}
+                sx={{
+                  height: 6,
+                  borderRadius: 3,
+                  bgcolor: 'rgba(124, 77, 255, 0.1)',
+                  '& .MuiLinearProgress-bar': {
+                    borderRadius: 3,
+                    background: `linear-gradient(90deg, ${tokens.primaryDark}, ${tokens.primary})`,
+                  },
+                }}
+              />
+            </Box>
+
+            <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Typography variant="caption" sx={{ color: tokens.primary, fontWeight: 600 }}>
+                {Math.round(percent)}%
+              </Typography>
+              <Stack direction="row" spacing={1.5}>
+                {worker.progress && worker.progress.fps > 0 && (
+                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                    {worker.progress.fps.toFixed(0)} fps
+                  </Typography>
+                )}
+                {worker.progress && worker.progress.speed > 0 && (
+                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                    {worker.progress.speed.toFixed(1)}x
+                  </Typography>
+                )}
+                {worker.progress && worker.progress.eta > 0 && (
+                  <Typography variant="caption" sx={{ color: tokens.textMuted }}>
+                    ETA {formatEta(worker.progress.eta)}
+                  </Typography>
+                )}
+              </Stack>
+            </Box>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  return `${m}m ${s}s`
+}
+
 export default function Dashboard() {
   const queryClient = useQueryClient()
   const { data: stats, isLoading } = useQuery({ queryKey: ['stats'], queryFn: getStats, refetchInterval: 3000 })
+  const { data: workers } = useQuery({ queryKey: ['workers'], queryFn: getWorkers, refetchInterval: 1000 })
 
   const pauseMut = useMutation({
     mutationFn: pauseQueue,
@@ -215,6 +364,22 @@ export default function Dashboard() {
           />
         </Grid>
       </Grid>
+
+      {/* Worker Cards */}
+      {workers && workers.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="subtitle2" sx={{ color: tokens.textMuted, mb: 1.5, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+            Workers
+          </Typography>
+          <Grid container spacing={tokens.gridSpacing}>
+            {workers.map((w) => (
+              <Grid key={w.slot} size={{ xs: 12, md: 6 }}>
+                <WorkerCard worker={w} />
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
+      )}
     </Box>
   )
 }

@@ -24,7 +24,7 @@ import {
   showFileSkipped,
 } from './display.js';
 import {
-  NUM_WORKERS,
+  getNumWorkers,
   initDashboard,
   setWorker,
   updateWorkerProgress,
@@ -36,8 +36,16 @@ import {
 } from './dashboard.js';
 import type { Profile } from '../types/index.js';
 
-const MAX_CONCURRENT = NUM_WORKERS;
-const workerSlots: boolean[] = Array(MAX_CONCURRENT).fill(false);
+let MAX_CONCURRENT = getNumWorkers();
+let workerSlots: boolean[] = Array(MAX_CONCURRENT).fill(false);
+
+/**
+ * Reinitialize worker slots when NUM_WORKERS changes at startup.
+ */
+export function reinitWorkerSlots(): void {
+  MAX_CONCURRENT = getNumWorkers();
+  workerSlots = Array(MAX_CONCURRENT).fill(false);
+}
 let processing = false;
 let paused = false;
 

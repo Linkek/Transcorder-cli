@@ -45,6 +45,30 @@ export interface Stats {
 
 export const getStats = () => request<Stats>('/stats');
 
+// ─── Workers ────────────────────────────────────────────────────────────────
+
+export interface WorkerProgress {
+  percent: number;
+  fps: number;
+  speed: number;
+  eta: number;
+  currentSize: number;
+  timemark: string;
+}
+
+export interface WorkerState {
+  slot: number;
+  idle: boolean;
+  fileName?: string;
+  srcRes?: string;
+  targetRes?: string;
+  hdr?: boolean;
+  removeHDR?: boolean;
+  progress?: WorkerProgress | null;
+}
+
+export const getWorkers = () => request<WorkerState[]>('/workers');
+
 // ─── Jobs ───────────────────────────────────────────────────────────────────
 
 export interface Job {

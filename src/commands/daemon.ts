@@ -4,11 +4,11 @@ import { logger } from '../lib/logger.js';
 import { loadProfiles, loadGlobalConfig } from '../lib/profiles.js';
 import { closeDb, getStats, hasCompletedJob, markInterruptedJobsAsFailed } from '../lib/db.js';
 import { analyzeFile } from '../lib/check.js';
-import { queueFile, resumePendingJobs, pauseQueue, resumeQueue, isQueuePaused } from '../lib/queue.js';
+import { queueFile, resumePendingJobs, pauseQueue, resumeQueue, isQueuePaused, reinitWorkerSlots } from '../lib/queue.js';
 import { startWatching, stopWatching, scanFolder } from '../lib/watcher.js';
 import { clearAllCaches } from '../lib/cache.js';
 import { showBanner } from '../lib/display.js';
-import { destroyDashboard, setDashboardStats } from '../lib/dashboard.js';
+import { destroyDashboard, setDashboardStats, setNumWorkers } from '../lib/dashboard.js';
 import { startWebUI } from '../lib/webui.js';
 import { enableLoggingIfNeeded } from './shared.js';
 
@@ -16,9 +16,16 @@ export async function startDaemon(verbose: boolean): Promise<void> {
   if (verbose) logger.setLevel('debug');
 
   const profiles = loadProfiles();
+  const globalConfig = loadGlobalConfig();
   enableLoggingIfNeeded(profiles);
+
+  // Configure worker count from global settings
+  const numWorkers = globalConfig.workers;
+  setNumWorkers(numWorkers);
+  reinitWorkerSlots();
+
   console.clear();
-  showBanner(profiles.length, 2);
+  showBanner(profiles.length, numWorkers);
 
   // Mark interrupted jobs as failed & clean caches
   const interrupted = markInterruptedJobsAsFailed();
@@ -38,7 +45,6 @@ export async function startDaemon(verbose: boolean): Promise<void> {
   });
 
   // ── Start Web UI if enabled ──
-  const globalConfig = loadGlobalConfig();
   let stopWebUI: (() => void) | null = null;
   if (globalConfig.webui) {
     stopWebUI = startWebUI(globalConfig);

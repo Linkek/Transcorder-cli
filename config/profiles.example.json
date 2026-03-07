@@ -5,7 +5,8 @@
         "webuiUsername": "admin",
         "webuiPassword": "transcorder",
         "localAllow": true,
-        "pauseOnStartup": false
+        "pauseOnStartup": false,
+        "workers": 2
     },
     "profiles": [
         {

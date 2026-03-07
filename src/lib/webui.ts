@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { logger } from './logger.js';
 import { loadProfiles } from './profiles.js';
+import { getWorkerStates } from './dashboard.js';
 import {
   getAllJobs,
   getStats,
@@ -142,6 +143,12 @@ function createApp(config: GlobalConfig): express.Express {
     const stats = getStats();
     const queue = getQueueStatus();
     res.json({ ...stats, ...queue });
+  });
+
+  // ─── Workers ────────────────────────────────────────────────────────────
+
+  app.get('/api/workers', (_req, res) => {
+    res.json(getWorkerStates());
   });
 
   // ─── Jobs ───────────────────────────────────────────────────────────────
