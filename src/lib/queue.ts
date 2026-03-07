@@ -2,16 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import figures from 'figures';
-import { moveFile } from './utils.js';
+import { moveFile, formatFileSize, formatDuration, buildOutputFileName } from './utils.js';
 import { logger } from './logger.js';
 import { analyzeFile } from './check.js';
 import { transcode, replaceOriginal } from './transcode.js';
-import { formatResolution, formatFileSize, formatDuration } from './ffmpeg.js';
-import { buildOutputFileName } from './utils.js';
+import { formatResolution, probeFile } from './ffmpeg.js';
 import { removeCacheFile } from './cache.js';
 import {
   addJob,
   addMetadata,
+  addOutputMetadata,
   updateJobStatus,
   hasActiveJob,
   hasCompletedJob,
@@ -23,6 +23,7 @@ import {
   showFileSkipped,
 } from './display.js';
 import {
+  NUM_WORKERS,
   initDashboard,
   setWorker,
   updateWorkerProgress,
@@ -30,10 +31,11 @@ import {
   clearWorker,
   dashLog,
   setPendingCount,
+  updateDashboardStats,
 } from './dashboard.js';
 import type { Profile } from '../types/index.js';
 
-const MAX_CONCURRENT = 2;
+const MAX_CONCURRENT = NUM_WORKERS;
 const workerSlots: boolean[] = Array(MAX_CONCURRENT).fill(false);
 let processing = false;
 
@@ -171,6 +173,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
     // ── Step 0: Verify source file exists ──────────────────────────────────
     if (!fs.existsSync(filePath)) {
       updateJobStatus(job.id, 'failed', { error: 'Source file no longer exists' });
+      updateDashboardStats({ failed: 1 });
       dashLog(`${ts()} ${chalk.red(figures.cross)} Missing: ${chalk.white(fileName)} — source file no longer exists`);
       return;
     }
@@ -182,7 +185,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
     const checkResult = await analyzeFile(filePath, profile);
     const { metadata } = checkResult;
 
-    // Store metadata
+    // Store source metadata
     addMetadata(job.id, {
       codec: metadata.video.codec_name,
       width: metadata.video.width,
@@ -192,6 +195,12 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
       isHDR: metadata.isHDR,
       hdrFormat: metadata.hdrFormat,
       colorTransfer: metadata.video.color_transfer,
+      colorPrimaries: metadata.video.color_primaries,
+      colorSpace: metadata.video.color_space,
+      pixFmt: metadata.video.pix_fmt,
+      frameRate: metadata.video.frame_rate,
+      sar: metadata.video.sample_aspect_ratio,
+      dar: metadata.video.display_aspect_ratio,
       audioStreams: metadata.audioStreams.length,
       subtitleStreams: metadata.subtitleStreams.length,
       fileSize: metadata.fileSize,
@@ -199,6 +208,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
 
     if (!checkResult.needsTranscode) {
       updateJobStatus(job.id, 'skipped');
+      updateDashboardStats({ skipped: 1 });
       dashLog(`${ts()} ${chalk.gray(figures.line)} Skip: ${chalk.gray(fileName)} — ${chalk.gray(checkResult.reasons.join('; '))}`);
       return;
     }
@@ -244,6 +254,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
       // Not enough size reduction, skip this file
       removeCacheFile(cachePath);
       updateJobStatus(job.id, 'skipped');
+      updateDashboardStats({ skipped: 1 });
       const reason = `Size reduction ${reductionPercent.toFixed(1)}% < required ${profile.minSizeReduction}%`;
       clearWorkerAndLog(slot,
         `${ts()} ${chalk.gray(figures.line)} Skip: ${chalk.gray(fileName)} — ${chalk.gray(reason)}`,
@@ -268,6 +279,32 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
     const savedBytes = originalSize - outputSize;
 
     updateJobStatus(job.id, 'completed', { outputPath, savedBytes });
+    updateDashboardStats({ completed: 1, savedBytes: Math.max(0, savedBytes) });
+
+    // Store output metadata for debugging/auditing
+    try {
+      const outMeta = await probeFile(outputPath);
+      addOutputMetadata(job.id, {
+        codec: outMeta.video.codec_name,
+        width: outMeta.video.width,
+        height: outMeta.video.height,
+        duration: outMeta.duration,
+        bitrate: outMeta.video.bit_rate,
+        isHDR: outMeta.isHDR,
+        colorTransfer: outMeta.video.color_transfer,
+        colorPrimaries: outMeta.video.color_primaries,
+        colorSpace: outMeta.video.color_space,
+        pixFmt: outMeta.video.pix_fmt,
+        frameRate: outMeta.video.frame_rate,
+        sar: outMeta.video.sample_aspect_ratio,
+        dar: outMeta.video.display_aspect_ratio,
+        audioStreams: outMeta.audioStreams.length,
+        subtitleStreams: outMeta.subtitleStreams.length,
+        fileSize: outMeta.fileSize,
+      });
+    } catch (err) {
+      logger.debug(`Could not probe output for metadata: ${(err as Error).message}`);
+    }
 
     const savedStr = savedBytes > 0 ? `, saved ${formatFileSize(savedBytes)}` : '';
     clearWorkerAndLog(slot,
@@ -278,6 +315,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     updateJobStatus(job.id, 'failed', { error: errMsg });
+    updateDashboardStats({ failed: 1 });
     clearWorkerAndLog(slot,
       `${ts()} ${chalk.red(figures.cross)} Error: ${chalk.white(fileName)} — ${chalk.red(errMsg)}`,
     );

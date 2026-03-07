@@ -1,10 +1,9 @@
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'node:fs';
 import path from 'node:path';
-import { moveFile } from './utils.js';
+import { moveFile, formatFileSize, buildOutputFileName } from './utils.js';
 import { logger } from './logger.js';
-import { formatResolution, formatFileSize } from './ffmpeg.js';
-import { buildOutputFileName } from './utils.js';
+import { formatResolution } from './ffmpeg.js';
 import type { Profile, CheckResult, TranscodeProgress } from '../types/index.js';
 
 export interface TranscodeCallbacks {
@@ -64,13 +63,23 @@ export function transcode(
       // Use zscale + tonemap pipeline
       const filters: string[] = [];
 
-      if (needsScale) {
-        filters.push(`scale=${targetWidth}:${targetHeight}:flags=lanczos`);
-      }
-
+      // Convert to linear light first, then scale, then tonemap
+      // Scaling must happen in linear light for correct results with HDR content
       filters.push(
         'zscale=t=linear:npl=100',
         'format=gbrpf32le',
+      );
+
+      if (needsScale) {
+        // Scale in linear light — use -2 for auto-calculated dimension to preserve AR
+        if (metadata.video.width / targetWidth >= metadata.video.height / targetHeight) {
+          filters.push(`scale=${targetWidth}:-2:flags=lanczos`);
+        } else {
+          filters.push(`scale=-2:${targetHeight}:flags=lanczos`);
+        }
+      }
+
+      filters.push(
         'zscale=p=bt709',
         'tonemap=hable:desat=0',
         'zscale=t=bt709:m=bt709:r=tv',
@@ -90,10 +99,12 @@ export function transcode(
         ]);
     } else if (needsScale) {
       // Scale only — use CUDA hardware scaling
+      // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
+      // force_divisible_by=2 ensures even dimensions (required by encoders)
       cmd
         .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
         .videoFilters([
-          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos`,
+          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
         ])
         .outputOptions([
           `-c:v hevc_nvenc`,
@@ -198,14 +209,22 @@ export function replaceOriginal(
 
   logger.debug(`Replacing: ${originalPath} → ${newPath}`);
 
-  // If new path is different from original, remove original first
-  if (newPath !== originalPath && fs.existsSync(originalPath)) {
+  // Move cache file first to avoid data loss if move fails
+  // (if original is deleted first and move fails, both files are lost)
+  if (newPath === originalPath) {
+    // Same path: write to temp, remove original, rename temp
+    const tmpPath = newPath + '.tmp';
+    moveFile(cachePath, tmpPath);
     fs.unlinkSync(originalPath);
-    logger.debug(`Deleted original: ${originalPath}`);
+    fs.renameSync(tmpPath, newPath);
+  } else {
+    // Different paths: move cache to destination, then remove original
+    moveFile(cachePath, newPath);
+    if (fs.existsSync(originalPath)) {
+      fs.unlinkSync(originalPath);
+      logger.debug(`Deleted original: ${originalPath}`);
+    }
   }
-
-  // Move cache file to original location (handles cross-device moves)
-  moveFile(cachePath, newPath);
   logger.debug(`Moved cache file to: ${newPath}`);
 
   return newPath;

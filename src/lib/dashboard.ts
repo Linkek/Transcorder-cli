@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import figures from 'figures';
 import type { TranscodeProgress } from '../types/index.js';
-import { formatDuration, formatFileSize } from './ffmpeg.js';
+import { formatDuration, formatFileSize } from './utils.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -14,15 +14,23 @@ interface WorkerState {
   progress: TranscodeProgress | null;
 }
 
+interface DashboardStats {
+  completed: number;
+  failed: number;
+  skipped: number;
+  savedBytes: number;
+}
+
 // ─── State ──────────────────────────────────────────────────────────────────
 
-const NUM_WORKERS = 2;
+export const NUM_WORKERS = 2;
 const workers: (WorkerState | null)[] = Array(NUM_WORKERS).fill(null);
 let active = false;
 let renderedLines = 0;
 let lastRenderTime = 0;
 let pendingRenderTimer: ReturnType<typeof setTimeout> | null = null;
 let queuePending = 0;
+const stats: DashboardStats = { completed: 0, failed: 0, skipped: 0, savedBytes: 0 };
 
 const RENDER_INTERVAL = 150; // ms between progress-only re-renders
 
@@ -78,6 +86,26 @@ export function dashLog(message: string): void {
 export function setPendingCount(count: number): void {
   queuePending = count;
   // Will be picked up on the next render — no immediate re-render needed.
+}
+
+/**
+ * Update dashboard stats counters. Called after each job finishes.
+ */
+export function updateDashboardStats(update: Partial<DashboardStats>): void {
+  if (update.completed !== undefined) stats.completed += update.completed;
+  if (update.failed !== undefined) stats.failed += update.failed;
+  if (update.skipped !== undefined) stats.skipped += update.skipped;
+  if (update.savedBytes !== undefined) stats.savedBytes += update.savedBytes;
+}
+
+/**
+ * Set dashboard stats to absolute values (e.g. from DB on startup).
+ */
+export function setDashboardStats(values: DashboardStats): void {
+  stats.completed = values.completed;
+  stats.failed = values.failed;
+  stats.skipped = values.skipped;
+  stats.savedBytes = values.savedBytes;
 }
 
 /**
@@ -209,7 +237,28 @@ function render(): void {
     }
   }
 
+  // ── Stats row ──
+  const savedStr = formatSaved(stats.savedBytes);
+  const statsLine = [
+    chalk.green(`${figures.tick} ${stats.completed}`),
+    chalk.red(`${figures.cross} ${stats.failed}`),
+    chalk.gray(`${figures.line} ${stats.skipped} skipped`),
+    chalk.cyan(`↓ ${savedStr} saved`),
+  ].join(chalk.gray('  │  '));
+
+  lines.push(chalk.gray('  ──────────────────────────────────────────────────────────'));
+  lines.push('  ' + statsLine);
+
   const output = lines.join('\n') + '\n';
   process.stdout.write(output);
   renderedLines = lines.length;
+}
+
+function formatSaved(bytes: number): string {
+  if (bytes < 0) return '0 B';
+  if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(2)} TB`;
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
 }

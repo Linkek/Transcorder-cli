@@ -39,12 +39,20 @@ export function probeFile(filePath: string): Promise<VideoMetadata> {
         frameRate = parseFloat(fpsStr);
       }
 
+      const vidWidth = rawVideo.width ?? 0;
+      const vidHeight = rawVideo.height ?? 0;
+
+      if (vidWidth === 0 || vidHeight === 0) {
+        reject(new Error(`Invalid video dimensions (${vidWidth}x${vidHeight}) in ${filePath}`));
+        return;
+      }
+
       const video: VideoStream = {
         index: rawVideo.index,
         codec_name: rawVideo.codec_name ?? 'unknown',
         codec_long_name: rawVideo.codec_long_name,
-        width: rawVideo.width ?? 0,
-        height: rawVideo.height ?? 0,
+        width: vidWidth,
+        height: vidHeight,
         frame_rate: frameRate,
         duration: rawVideo.duration ? parseFloat(String(rawVideo.duration)) : undefined,
         bit_rate: rawVideo.bit_rate ? parseInt(String(rawVideo.bit_rate), 10) : undefined,
@@ -52,6 +60,8 @@ export function probeFile(filePath: string): Promise<VideoMetadata> {
         color_primaries: (rawVideo as Record<string, unknown>).color_primaries as string | undefined,
         color_space: (rawVideo as Record<string, unknown>).color_space as string | undefined,
         pix_fmt: rawVideo.pix_fmt,
+        sample_aspect_ratio: (rawVideo as Record<string, unknown>).sample_aspect_ratio as string | undefined,
+        display_aspect_ratio: (rawVideo as Record<string, unknown>).display_aspect_ratio as string | undefined,
         side_data_list: (rawVideo as Record<string, unknown>).side_data_list as unknown[] | undefined,
       };
 
@@ -149,14 +159,6 @@ export function detectHDR(video: VideoStream): { isHDR: boolean; hdrFormat?: str
 
 export function checkNvencAvailable(): Promise<{ available: boolean; encoders: string[] }> {
   return new Promise((resolve) => {
-    const proc = ffmpeg()
-      .addOption('-encoders')
-      .output('/dev/null')
-      .on('error', () => {
-        // ffmpeg -encoders exits with an error code but still outputs
-      });
-
-    // Use a different approach: just run ffmpeg -encoders and parse output
     const { execSync } = require('node:child_process');
     try {
       const output = execSync('ffmpeg -encoders 2>/dev/null || true', { encoding: 'utf-8' });
@@ -202,18 +204,4 @@ export function formatResolution(width: number, height: number): string {
   return `${width}x${height}`;
 }
 
-export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-export function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
+// formatFileSize and formatDuration moved to utils.ts

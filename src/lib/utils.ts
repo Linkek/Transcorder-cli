@@ -178,11 +178,34 @@ export function moveFile(src: string, dest: string): void {
     fs.renameSync(src, dest);
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EXDEV') {
-      // Cross-device move: copy then delete
+      // Cross-device move: copy then delete, with size verification
       fs.copyFileSync(src, dest);
+      const srcSize = fs.statSync(src).size;
+      const destSize = fs.statSync(dest).size;
+      if (srcSize !== destSize) {
+        // Copy was incomplete — remove corrupt destination and throw
+        try { fs.unlinkSync(dest); } catch { /* best effort */ }
+        throw new Error(`Cross-device copy failed: size mismatch (src=${srcSize}, dest=${destSize})`);
+      }
       fs.unlinkSync(src);
     } else {
       throw err;
     }
   }
+}
+
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+export function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }

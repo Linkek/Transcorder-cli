@@ -18,7 +18,12 @@ export function loadProfiles(): Profile[] {
 
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
   // Strip single-line comments (// ...) to support JSONC
-  const stripped = raw.replace(/\/\/.*$/gm, '');
+  // Only strip // comments that are NOT inside quoted strings
+  const stripped = raw.replace(/"(?:[^"\\]|\\.)*"|(\/\/.*$)/gm, (match, commentGroup) => {
+    // If commentGroup is defined, it's a real comment — strip it
+    // Otherwise it's a quoted string — keep it
+    return commentGroup ? '' : match;
+  });
   let profiles: Profile[];
 
   try {

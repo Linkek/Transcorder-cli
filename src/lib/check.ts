@@ -98,6 +98,10 @@ export function calculateTargetResolution(
   targetWidth = targetWidth - (targetWidth % 2);
   targetHeight = targetHeight - (targetHeight % 2);
 
+  // Guard against zero dimensions from extreme aspect ratios
+  if (targetWidth < 2) targetWidth = 2;
+  if (targetHeight < 2) targetHeight = 2;
+
   return { targetWidth, targetHeight };
 }
 

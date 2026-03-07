@@ -53,6 +53,10 @@ export interface VideoStream {
   color_primaries?: string;
   color_space?: string;
   pix_fmt?: string;
+  /** Sample aspect ratio (e.g., "1:1", "32:27") */
+  sample_aspect_ratio?: string;
+  /** Display aspect ratio (e.g., "16:9", "4:3") */
+  display_aspect_ratio?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   side_data_list?: any[];
 }

@@ -49,6 +49,33 @@ function initSchema(): void {
       is_hdr INTEGER DEFAULT 0,
       hdr_format TEXT,
       color_transfer TEXT,
+      color_primaries TEXT,
+      color_space TEXT,
+      pix_fmt TEXT,
+      frame_rate REAL,
+      sample_aspect_ratio TEXT,
+      display_aspect_ratio TEXT,
+      audio_streams INTEGER,
+      subtitle_streams INTEGER,
+      file_size_bytes INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS output_metadata (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      codec TEXT,
+      width INTEGER,
+      height INTEGER,
+      duration_seconds REAL,
+      bitrate INTEGER,
+      is_hdr INTEGER DEFAULT 0,
+      color_transfer TEXT,
+      color_primaries TEXT,
+      color_space TEXT,
+      pix_fmt TEXT,
+      frame_rate REAL,
+      sample_aspect_ratio TEXT,
+      display_aspect_ratio TEXT,
       audio_streams INTEGER,
       subtitle_streams INTEGER,
       file_size_bytes INTEGER
@@ -65,17 +92,66 @@ function initSchema(): void {
   if (!cols.some((c) => c.name === 'saved_bytes')) {
     d.exec("ALTER TABLE jobs ADD COLUMN saved_bytes INTEGER DEFAULT 0");
   }
+
+  // Migration: add new source_metadata columns if missing (for existing DBs)
+  const srcCols = d.prepare("PRAGMA table_info(source_metadata)").all() as { name: string }[];
+  const srcMigrations: [string, string][] = [
+    ['color_primaries', 'TEXT'],
+    ['color_space', 'TEXT'],
+    ['pix_fmt', 'TEXT'],
+    ['frame_rate', 'REAL'],
+    ['sample_aspect_ratio', 'TEXT'],
+    ['display_aspect_ratio', 'TEXT'],
+  ];
+  for (const [col, type] of srcMigrations) {
+    if (!srcCols.some((c) => c.name === col)) {
+      d.exec(`ALTER TABLE source_metadata ADD COLUMN ${col} ${type}`);
+    }
+  }
+
+  // Migration: create output_metadata table if missing
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS output_metadata (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      codec TEXT,
+      width INTEGER,
+      height INTEGER,
+      duration_seconds REAL,
+      bitrate INTEGER,
+      is_hdr INTEGER DEFAULT 0,
+      color_transfer TEXT,
+      color_primaries TEXT,
+      color_space TEXT,
+      pix_fmt TEXT,
+      frame_rate REAL,
+      sample_aspect_ratio TEXT,
+      display_aspect_ratio TEXT,
+      audio_streams INTEGER,
+      subtitle_streams INTEGER,
+      file_size_bytes INTEGER
+    )
+  `);
 }
 
 // ─── Job CRUD ───────────────────────────────────────────────────────────────
 
 export function addJob(sourcePath: string, profileName: string): number {
   const d = getDb();
-  const result = d.prepare(`
-    INSERT INTO jobs (source_path, profile_name) VALUES (?, ?)
-  `).run(sourcePath, profileName);
-  logger.debug(`Added job #${result.lastInsertRowid} for ${sourcePath}`);
-  return Number(result.lastInsertRowid);
+  try {
+    const result = d.prepare(`
+      INSERT INTO jobs (source_path, profile_name) VALUES (?, ?)
+    `).run(sourcePath, profileName);
+    logger.debug(`Added job #${result.lastInsertRowid} for ${sourcePath}`);
+    return Number(result.lastInsertRowid);
+  } catch (err: unknown) {
+    // Handle unique constraint violations (e.g., duplicate pending job for same file)
+    if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+      logger.debug(`Job already exists for ${sourcePath}, skipping`);
+      return -1;
+    }
+    throw err;
+  }
 }
 
 export function addMetadata(
@@ -89,6 +165,12 @@ export function addMetadata(
     isHDR?: boolean;
     hdrFormat?: string;
     colorTransfer?: string;
+    colorPrimaries?: string;
+    colorSpace?: string;
+    pixFmt?: string;
+    frameRate?: number;
+    sar?: string;
+    dar?: string;
     audioStreams?: number;
     subtitleStreams?: number;
     fileSize?: number;
@@ -97,8 +179,11 @@ export function addMetadata(
   const d = getDb();
   d.prepare(`
     INSERT INTO source_metadata
-      (job_id, codec, width, height, duration_seconds, bitrate, is_hdr, hdr_format, color_transfer, audio_streams, subtitle_streams, file_size_bytes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (job_id, codec, width, height, duration_seconds, bitrate, is_hdr, hdr_format,
+       color_transfer, color_primaries, color_space, pix_fmt, frame_rate,
+       sample_aspect_ratio, display_aspect_ratio,
+       audio_streams, subtitle_streams, file_size_bytes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     jobId,
     meta.codec ?? null,
@@ -109,6 +194,62 @@ export function addMetadata(
     meta.isHDR ? 1 : 0,
     meta.hdrFormat ?? null,
     meta.colorTransfer ?? null,
+    meta.colorPrimaries ?? null,
+    meta.colorSpace ?? null,
+    meta.pixFmt ?? null,
+    meta.frameRate ?? null,
+    meta.sar ?? null,
+    meta.dar ?? null,
+    meta.audioStreams ?? null,
+    meta.subtitleStreams ?? null,
+    meta.fileSize ?? null,
+  );
+}
+
+export function addOutputMetadata(
+  jobId: number,
+  meta: {
+    codec?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    bitrate?: number;
+    isHDR?: boolean;
+    colorTransfer?: string;
+    colorPrimaries?: string;
+    colorSpace?: string;
+    pixFmt?: string;
+    frameRate?: number;
+    sar?: string;
+    dar?: string;
+    audioStreams?: number;
+    subtitleStreams?: number;
+    fileSize?: number;
+  },
+): void {
+  const d = getDb();
+  d.prepare(`
+    INSERT INTO output_metadata
+      (job_id, codec, width, height, duration_seconds, bitrate, is_hdr,
+       color_transfer, color_primaries, color_space, pix_fmt, frame_rate,
+       sample_aspect_ratio, display_aspect_ratio,
+       audio_streams, subtitle_streams, file_size_bytes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    jobId,
+    meta.codec ?? null,
+    meta.width ?? null,
+    meta.height ?? null,
+    meta.duration ?? null,
+    meta.bitrate ?? null,
+    meta.isHDR ? 1 : 0,
+    meta.colorTransfer ?? null,
+    meta.colorPrimaries ?? null,
+    meta.colorSpace ?? null,
+    meta.pixFmt ?? null,
+    meta.frameRate ?? null,
+    meta.sar ?? null,
+    meta.dar ?? null,
     meta.audioStreams ?? null,
     meta.subtitleStreams ?? null,
     meta.fileSize ?? null,
@@ -243,6 +384,54 @@ export function getStats(): { total: number; pending: number; completed: number;
 }
 
 // ─── Debug / Reset ──────────────────────────────────────────────────────────
+
+/**
+ * Get all completed jobs that were downscaled (source was larger than given max dimensions).
+ * Returns source path, output path, original width/height.
+ */
+export function getCompletedDownscaledJobs(maxWidth: number, maxHeight: number): {
+  id: number;
+  sourcePath: string;
+  outputPath: string;
+  srcWidth: number;
+  srcHeight: number;
+  completedAt: string;
+  profileName: string;
+}[] {
+  const d = getDb();
+  return d.prepare(`
+    SELECT j.id, j.source_path as sourcePath, j.output_path as outputPath,
+           m.width as srcWidth, m.height as srcHeight,
+           j.completed_at as completedAt, j.profile_name as profileName
+    FROM jobs j
+    JOIN source_metadata m ON m.job_id = j.id
+    WHERE j.status = 'completed'
+      AND j.output_path IS NOT NULL
+      AND (m.width > ? OR m.height > ?)
+    ORDER BY j.completed_at ASC
+  `).all(maxWidth, maxHeight) as {
+    id: number;
+    sourcePath: string;
+    outputPath: string;
+    srcWidth: number;
+    srcHeight: number;
+    completedAt: string;
+    profileName: string;
+  }[];
+}
+
+/**
+ * Delete a completed job by ID (so it can be re-processed).
+ */
+export function deleteJob(jobId: number): void {
+  const d = getDb();
+  const del = d.transaction(() => {
+    d.prepare('DELETE FROM output_metadata WHERE job_id = ?').run(jobId);
+    d.prepare('DELETE FROM source_metadata WHERE job_id = ?').run(jobId);
+    d.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+  });
+  del();
+}
 
 export function resetDatabase(): void {
   const d = getDb();

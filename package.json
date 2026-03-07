@@ -1,6 +1,6 @@
 {
   "name": "transcorder",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Video transcoding daemon with NVIDIA NVENC support",
   "type": "module",
   "bin": {
@@ -12,9 +12,12 @@
     "daemon:verbose": "tsx src/cli.ts daemon --verbose",
     "scan": "tsx src/cli.ts scan",
     "scan:verbose": "tsx src/cli.ts scan --verbose",
+    "audit": "tsx src/cli.ts audit",
     "build": "tsc",
     "test": "vitest",
-    "test:run": "vitest run",
+    "test:run": "vitest run --exclude tests/aspect-ratio.integration.test.ts",
+    "test:integration": "vitest run tests/aspect-ratio.integration.test.ts",
+    "test:all": "vitest run",
     "test:coverage": "vitest run --coverage",
     "transcorder": "tsx src/cli.ts"
   },

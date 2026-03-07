@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatResolution,
-  formatFileSize,
-  formatDuration,
   detectHDR,
 } from '../src/lib/ffmpeg.js';
+import { formatFileSize, formatDuration } from '../src/lib/utils.js';
 import type { VideoStream } from '../src/types/index.js';
 
 describe('formatResolution', () => {

@@ -13,3 +13,7 @@ input/*.webm
 input/*.m4v
 input/*.ts
 input/*.wmv
+live-data/
+*.log
+*.db
+tmp-test-clips/
