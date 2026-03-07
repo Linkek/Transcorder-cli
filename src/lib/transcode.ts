@@ -23,6 +23,11 @@ export interface TranscodeHandle {
 /**
  * Transcode a video file according to the profile settings.
  * Returns a handle with the promise and a kill function to abort.
+ *
+ * For files that need scaling (non-HDR), uses GPU-first with automatic CPU fallback:
+ *   1. Try the proven GPU pipeline (scale_cuda) — fast
+ *   2. If ffmpeg fails with a filter/format error, retry with CPU scaling — universal compat
+ * All other paths (tonemap, re-encode only) run single-attempt as they already work reliably.
  */
 export function transcode(
   checkResult: CheckResult,
@@ -61,155 +66,244 @@ export function transcode(
     logger.debug(`Transcoding: ${filePath} → ${outputPath}`);
     logger.debug(`Target: ${targetWidth}x${targetHeight}, HDR removal: ${metadata.isHDR && profile.removeHDR}`);
 
-    // Build the ffmpeg command
-    cmd = ffmpeg(filePath);
-
     // ── Video filters ──────────────────────────────────────────────────────
     const needsScale = metadata.video.width > targetWidth || metadata.video.height > targetHeight;
     const needsTonemap = metadata.isHDR && profile.removeHDR;
 
-    if (needsTonemap) {
-      // HDR→SDR: must go through CPU filters for tonemap, then back to NVENC
-      // Use zscale + tonemap pipeline
-      const filters: string[] = [];
+    /**
+     * Build an ffmpeg command for a given scale strategy.
+     * 'gpu' = scale_cuda (original proven pipeline)
+     * 'cpu' = software scale (fallback for edge-case codecs/formats)
+     * null  = not a scale job (tonemap or re-encode only)
+     */
+    const buildCommand = (scaleStrategy: 'gpu' | 'cpu' | null) => {
+      const c = ffmpeg(filePath);
 
-      // Convert to linear light first, then scale, then tonemap
-      // Scaling must happen in linear light for correct results with HDR content
-      filters.push(
-        'zscale=t=linear:npl=100',
-        'format=gbrpf32le',
-      );
+      if (needsTonemap) {
+        // HDR→SDR: must go through CPU filters for tonemap, then back to NVENC
+        // Use zscale + tonemap pipeline
+        const filters: string[] = [];
 
-      if (needsScale) {
-        // Scale in linear light — use -2 for auto-calculated dimension to preserve AR
-        if (metadata.video.width / targetWidth >= metadata.video.height / targetHeight) {
-          filters.push(`scale=${targetWidth}:-2:flags=lanczos`);
-        } else {
-          filters.push(`scale=-2:${targetHeight}:flags=lanczos`);
+        // Convert to linear light first, then scale, then tonemap
+        // Scaling must happen in linear light for correct results with HDR content
+        filters.push(
+          'zscale=t=linear:npl=100',
+          'format=gbrpf32le',
+        );
+
+        if (needsScale) {
+          // Scale in linear light — use -2 for auto-calculated dimension to preserve AR
+          if (metadata.video.width / targetWidth >= metadata.video.height / targetHeight) {
+            filters.push(`scale=${targetWidth}:-2:flags=lanczos`);
+          } else {
+            filters.push(`scale=-2:${targetHeight}:flags=lanczos`);
+          }
         }
+
+        filters.push(
+          'zscale=p=bt709',
+          'tonemap=mobius:desat=2',
+          'zscale=t=bt709:m=bt709:r=tv',
+          'format=yuv420p',
+        );
+
+        c
+          .videoFilters(filters)
+          .outputOptions([
+            `-c:v hevc_nvenc`,
+            `-preset ${profile.nvencPreset}`,
+            `-tune hq`,
+            `-rc:v vbr`,
+            `-cq:v ${profile.cqValue}`,
+            '-b:v 0',
+            '-pix_fmt yuv420p',
+          ]);
+      } else if (needsScale && scaleStrategy === 'gpu') {
+        // ── Original proven GPU scale pipeline ──────────────────────────────
+        // Scale only — use CUDA hardware scaling
+        // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
+        // force_divisible_by=2 ensures even dimensions (required by encoders)
+        const is10bit = metadata.video.pix_fmt &&
+          (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+
+        c
+          .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+          .videoFilters([
+            `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+          ])
+          .outputOptions([
+            `-c:v hevc_nvenc`,
+            `-preset ${profile.nvencPreset}`,
+            `-tune hq`,
+            `-rc:v vbr`,
+            `-cq:v ${profile.cqValue}`,
+            '-b:v 0',
+            ...(is10bit ? ['-pix_fmt p010le'] : []),
+          ]);
+      } else if (needsScale && scaleStrategy === 'cpu') {
+        // ── CPU scale fallback ──────────────────────────────────────────────
+        // For edge-case codecs/formats where scale_cuda fails with filter errors.
+        // CUDA decode auto-downloads frames to CPU; software lanczos; NVENC encodes.
+        // Slower but universally compatible.
+        c
+          .inputOptions(['-hwaccel', 'cuda'])
+          .videoFilters([
+            `scale=${targetWidth}:${targetHeight}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+            'format=yuv420p',
+          ])
+          .outputOptions([
+            `-c:v hevc_nvenc`,
+            `-preset ${profile.nvencPreset}`,
+            `-tune hq`,
+            `-rc:v vbr`,
+            `-cq:v ${profile.cqValue}`,
+            '-b:v 0',
+          ]);
+      } else {
+        // No scale, no tonemap — re-encode only
+        // Keep frames on GPU to avoid CPU-side pixel format conversion issues
+        const is10bit = metadata.video.pix_fmt &&
+          (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+
+        c
+          .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+          .outputOptions([
+            `-c:v hevc_nvenc`,
+            `-preset ${profile.nvencPreset}`,
+            `-tune hq`,
+            `-rc:v vbr`,
+            `-cq:v ${profile.cqValue}`,
+            '-b:v 0',
+            ...(is10bit ? ['-pix_fmt p010le'] : []),
+          ]);
       }
 
-      filters.push(
-        'zscale=p=bt709',
-        'tonemap=mobius:desat=2',
-        'zscale=t=bt709:m=bt709:r=tv',
-        'format=yuv420p',
+      // ── Audio: copy all streams ───────────────────────────────────────────
+      c.outputOptions([
+        '-map 0:v:0',   // First video stream
+        '-map 0:a?',    // All audio streams (? = don't fail if none)
+        '-map 0:s?',    // All subtitle streams
+        '-c:a copy',    // Copy audio as-is
+        '-c:s copy',    // Copy subtitles as-is
+      ]);
+
+      // ── Preserve original frame rate ──────────────────────────────────────
+      if (metadata.video.frame_rate && metadata.video.frame_rate > 0) {
+        const fps = metadata.video.frame_rate;
+        logger.debug(`Preserving frame rate: ${fps.toFixed(3)} fps`);
+        c.outputOptions([`-r ${fps}`]);
+      }
+
+      // ── Metadata ──────────────────────────────────────────────────────────
+      c.outputOptions([
+        '-map_metadata 0',           // Copy global metadata
+        '-movflags +faststart',      // Web-friendly (for MP4)
+      ]);
+
+      c.output(outputPath);
+      return c;
+    };
+
+    /** Wire up progress/start/end/error events on an ffmpeg command */
+    const attachEvents = (
+      c: ReturnType<typeof ffmpeg>,
+      onDone: (out: string) => void,
+      onFail: (err: Error) => void,
+    ) => {
+      let startTime = Date.now();
+
+      c.on('start', (commandLine) => {
+        startTime = Date.now();
+        logger.debug(`FFmpeg command: ${commandLine}`);
+        callbacks?.onStart?.(commandLine);
+      });
+
+      c.on('progress', (progress) => {
+        const percent = progress.percent ?? 0;
+        const elapsed = (Date.now() - startTime) / 1000;
+        const eta = percent > 0 ? (elapsed / percent) * (100 - percent) : 0;
+
+        const tp: TranscodeProgress = {
+          percent: Math.min(100, Math.max(0, percent)),
+          fps: progress.currentFps ?? 0,
+          speed: parseFloat(String(progress.currentKbps ?? 0)),
+          eta,
+          currentSize: progress.targetSize ? progress.targetSize * 1024 : 0,
+          timemark: progress.timemark ?? '00:00:00',
+        };
+
+        callbacks?.onProgress?.(tp);
+      });
+
+      c.on('end', () => onDone(outputPath));
+      c.on('error', (err) => onFail(err));
+    };
+
+    // ── Execution with optional GPU→CPU fallback for scale jobs ─────────────
+    const canFallback = needsScale && !needsTonemap;
+
+    if (canFallback) {
+      // GPU-first: try scale_cuda, auto-retry with CPU scale on filter errors
+      cmd = buildCommand('gpu');
+
+      attachEvents(
+        cmd,
+        (out) => {
+          logger.debug(`Transcode complete (GPU scale): ${out}`);
+          callbacks?.onEnd?.(out);
+          resolve(out);
+        },
+        (err) => {
+          const msg = err.message.toLowerCase();
+          const isFilterError = msg.includes('filter') || msg.includes('auto_scale')
+            || msg.includes('impossible to convert') || msg.includes('invalid argument');
+
+          if (!isFilterError) {
+            logger.error(`Transcode failed: ${err.message}`);
+            callbacks?.onError?.(err);
+            reject(err);
+            return;
+          }
+
+          // Filter error → retry with CPU scaling
+          logger.info(`GPU scale failed for ${fileName}, retrying with CPU scale...`);
+          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+
+          cmd = buildCommand('cpu');
+          attachEvents(
+            cmd,
+            (out) => {
+              logger.debug(`Transcode complete (CPU scale fallback): ${out}`);
+              callbacks?.onEnd?.(out);
+              resolve(out);
+            },
+            (retryErr) => {
+              logger.error(`Transcode failed (CPU fallback): ${retryErr.message}`);
+              callbacks?.onError?.(retryErr);
+              reject(retryErr);
+            },
+          );
+          cmd.run();
+        },
       );
-
-      cmd
-        .videoFilters(filters)
-        .outputOptions([
-          `-c:v hevc_nvenc`,
-          `-preset ${profile.nvencPreset}`,
-          `-tune hq`,
-          `-rc:v vbr`,
-          `-cq:v ${profile.cqValue}`,
-          '-b:v 0',
-          '-pix_fmt yuv420p',
-        ]);
-    } else if (needsScale) {
-      // Scale path — GPU decode + GPU scale + explicit download for encoder compatibility
-      // scale_cuda runs entirely in VRAM (fast), then hwdownload brings the smaller
-      // (already downscaled) frames to CPU for NVENC. This avoids the auto_scaler
-      // format negotiation failures while keeping scaling on the GPU.
-      // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
-      // force_divisible_by=2 ensures even dimensions (required by encoders)
-
-      cmd
-        .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
-        .videoFilters([
-          `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-          'hwdownload',
-          'format=nv12',
-        ])
-        .outputOptions([
-          `-c:v hevc_nvenc`,
-          `-preset ${profile.nvencPreset}`,
-          `-tune hq`,
-          `-rc:v vbr`,
-          `-cq:v ${profile.cqValue}`,
-          '-b:v 0',
-        ]);
     } else {
-      // No scale, no tonemap — re-encode only
-      // Keep frames on GPU to avoid CPU-side pixel format conversion issues
-      const is10bit = metadata.video.pix_fmt &&
-        (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+      // Single-attempt paths: tonemap or re-encode only (no fallback needed)
+      cmd = buildCommand(null);
 
-      cmd
-        .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
-        .outputOptions([
-          `-c:v hevc_nvenc`,
-          `-preset ${profile.nvencPreset}`,
-          `-tune hq`,
-          `-rc:v vbr`,
-          `-cq:v ${profile.cqValue}`,
-          '-b:v 0',
-          ...(is10bit ? ['-pix_fmt p010le'] : []),
-        ]);
+      attachEvents(
+        cmd,
+        (out) => {
+          logger.debug(`Transcode complete: ${out}`);
+          callbacks?.onEnd?.(out);
+          resolve(out);
+        },
+        (err) => {
+          logger.error(`Transcode failed: ${err.message}`);
+          callbacks?.onError?.(err);
+          reject(err);
+        },
+      );
     }
-
-    // ── Audio: copy all streams ─────────────────────────────────────────────
-    cmd.outputOptions([
-      '-map 0:v:0',   // First video stream
-      '-map 0:a?',    // All audio streams (? = don't fail if none)
-      '-map 0:s?',    // All subtitle streams
-      '-c:a copy',    // Copy audio as-is
-      '-c:s copy',    // Copy subtitles as-is
-    ]);
-
-    // ── Preserve original frame rate ────────────────────────────────────────
-    if (metadata.video.frame_rate && metadata.video.frame_rate > 0) {
-      const fps = metadata.video.frame_rate;
-      logger.debug(`Preserving frame rate: ${fps.toFixed(3)} fps`);
-      cmd.outputOptions([`-r ${fps}`]);
-    }
-
-    // ── Metadata ────────────────────────────────────────────────────────────
-    cmd.outputOptions([
-      '-map_metadata 0',           // Copy global metadata
-      '-movflags +faststart',      // Web-friendly (for MP4)
-    ]);
-
-    cmd.output(outputPath);
-
-    // ── Progress tracking ───────────────────────────────────────────────────
-    let startTime = Date.now();
-
-    cmd.on('start', (commandLine) => {
-      startTime = Date.now();
-      logger.debug(`FFmpeg command: ${commandLine}`);
-      callbacks?.onStart?.(commandLine);
-    });
-
-    cmd.on('progress', (progress) => {
-      const percent = progress.percent ?? 0;
-      const elapsed = (Date.now() - startTime) / 1000;
-      const eta = percent > 0 ? (elapsed / percent) * (100 - percent) : 0;
-
-      const tp: TranscodeProgress = {
-        percent: Math.min(100, Math.max(0, percent)),
-        fps: progress.currentFps ?? 0,
-        speed: parseFloat(String(progress.currentKbps ?? 0)),
-        eta,
-        currentSize: progress.targetSize ? progress.targetSize * 1024 : 0,
-        timemark: progress.timemark ?? '00:00:00',
-      };
-
-      callbacks?.onProgress?.(tp);
-    });
-
-    cmd.on('end', () => {
-      logger.debug(`Transcode complete: ${outputPath}`);
-      callbacks?.onEnd?.(outputPath);
-      resolve(outputPath);
-    });
-
-    cmd.on('error', (err) => {
-      logger.error(`Transcode failed: ${err.message}`);
-      callbacks?.onError?.(err);
-      reject(err);
-    });
 
     cmd.run();
   });
