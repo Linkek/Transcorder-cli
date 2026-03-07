@@ -336,7 +336,7 @@ describe('Aspect Ratio Integration Tests', () => {
           return;
         }
 
-        const outputPath = await transcode(checkResult, profile);
+        const outputPath = await transcode(checkResult, profile).promise;
 
         // Probe the output
         const outMeta = await probeFile(outputPath);
@@ -369,7 +369,7 @@ describe('Aspect Ratio Integration Tests', () => {
       // This file may or may not need transcode depending on codec check
       // If it does transcode, verify dimensions stay the same
       if (checkResult.needsTranscode) {
-        const outputPath = await transcode(checkResult, profile);
+        const outputPath = await transcode(checkResult, profile).promise;
         const outMeta = await probeFile(outputPath);
 
         expect(outMeta.video.width).toBe(1280);
