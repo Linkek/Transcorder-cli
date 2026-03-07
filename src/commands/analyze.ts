@@ -110,7 +110,7 @@ async function browseAndAnalyze(profiles: Profile[]): Promise<void> {
         try {
           cachePath = await transcode(result, profile, {
             onProgress: (progress) => updateProgressBar(progressBar, progress),
-          });
+          }).promise;
           progressBar.stop();
 
           updateJobStatus(jobId, 'replacing');

@@ -14,7 +14,7 @@ import path from 'node:path';
 
 export function showBanner(profiles: number, workers: number): void {
   const title = chalk.bold.hex('#7C4DFF')('TRANSCORDER');
-  const version = chalk.gray('v1.0.0');
+  const version = chalk.gray('v1.2.1');
   const info = chalk.white(`Watching ${chalk.cyan(String(profiles))} profile(s) ${chalk.gray('•')} ${chalk.cyan(String(workers))} worker(s) ready`);
 
   const banner = boxen(`${title}  ${version}\n${info}`, {

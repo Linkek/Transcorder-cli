@@ -1,3 +1,29 @@
+// ─── Global Configuration ────────────────────────────────────────────────────
+
+export interface GlobalConfig {
+  /** Enable the web UI dashboard (default: false) */
+  webui: boolean;
+  /** Port for the web UI server (default: 9800) */
+  webuiPort: number;
+  /** Username for web UI login */
+  webuiUsername: string;
+  /** Password for web UI login */
+  webuiPassword: string;
+  /** If true, requests from localhost skip authentication (default: true) */
+  localAllow: boolean;
+  /** If true, the queue starts paused on daemon startup (default: false) */
+  pauseOnStartup: boolean;
+}
+
+export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
+  webui: false,
+  webuiPort: 9800,
+  webuiUsername: 'admin',
+  webuiPassword: 'transcorder',
+  localAllow: true,
+  pauseOnStartup: false,
+};
+
 // ─── Profile Configuration ───────────────────────────────────────────────────
 
 export interface Profile {

@@ -238,7 +238,7 @@ async function processQueuedFiles(profiles: Profile[]): Promise<void> {
 
       cachePath = await transcode(result, profile, {
         onProgress: (progress) => updateProgressBar(progressBar, progress),
-      });
+      }).promise;
       progressBar.stop();
 
       // Check size reduction before replacing

@@ -1,15 +1,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { logger } from './logger.js';
-import type { Profile } from '../types/index.js';
+import type { Profile, GlobalConfig } from '../types/index.js';
+import { DEFAULT_GLOBAL_CONFIG } from '../types/index.js';
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const CONFIG_PATH = path.join(PROJECT_ROOT, 'config', 'profiles.json');
 
+/** Cached global config after first load */
+let cachedGlobalConfig: GlobalConfig | null = null;
+
 /**
- * Load all profiles from config/profiles.json.
+ * Strip JSONC comments from raw config text.
  */
-export function loadProfiles(): Profile[] {
+function stripJsoncComments(raw: string): string {
+  return raw.replace(/"(?:[^"\\]|\\.)*"|(\/\/.*$)/gm, (match, commentGroup) => {
+    return commentGroup ? '' : match;
+  });
+}
+
+/**
+ * Parse the config file, supporting both formats:
+ *   - Legacy: [ { profile }, ... ]
+ *   - New:    { "global": { ... }, "profiles": [ { profile }, ... ] }
+ */
+function parseConfigFile(): { global: GlobalConfig; profiles: Profile[] } {
   if (!fs.existsSync(CONFIG_PATH)) {
     logger.error(`Config file not found: ${CONFIG_PATH}`);
     logger.info('Run "transcorder config init" to create a default config.');
@@ -17,26 +32,47 @@ export function loadProfiles(): Profile[] {
   }
 
   const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-  // Strip single-line comments (// ...) to support JSONC
-  // Only strip // comments that are NOT inside quoted strings
-  const stripped = raw.replace(/"(?:[^"\\]|\\.)*"|(\/\/.*$)/gm, (match, commentGroup) => {
-    // If commentGroup is defined, it's a real comment — strip it
-    // Otherwise it's a quoted string — keep it
-    return commentGroup ? '' : match;
-  });
-  let profiles: Profile[];
+  const stripped = stripJsoncComments(raw);
+  let parsed: unknown;
 
   try {
-    profiles = JSON.parse(stripped);
+    parsed = JSON.parse(stripped);
   } catch (e) {
     logger.error(`Failed to parse config file: ${(e as Error).message}`);
     process.exit(1);
   }
 
-  if (!Array.isArray(profiles) || profiles.length === 0) {
-    logger.error('Config file must contain a non-empty array of profiles.');
+  let globalConfig: GlobalConfig;
+  let profiles: Profile[];
+
+  if (Array.isArray(parsed)) {
+    // Legacy format: plain array of profiles
+    globalConfig = { ...DEFAULT_GLOBAL_CONFIG };
+    profiles = parsed;
+  } else if (parsed && typeof parsed === 'object' && 'profiles' in parsed) {
+    // New format: { global: {...}, profiles: [...] }
+    const config = parsed as { global?: Partial<GlobalConfig>; profiles: Profile[] };
+    globalConfig = { ...DEFAULT_GLOBAL_CONFIG, ...config.global };
+    profiles = config.profiles;
+  } else {
+    logger.error('Config file must contain a profiles array or { global: {}, profiles: [] }.');
     process.exit(1);
   }
+
+  if (!Array.isArray(profiles) || profiles.length === 0) {
+    logger.error('Config must contain at least one profile.');
+    process.exit(1);
+  }
+
+  return { global: globalConfig, profiles };
+}
+
+/**
+ * Load all profiles from config/profiles.json.
+ */
+export function loadProfiles(): Profile[] {
+  const { global: globalConfig, profiles } = parseConfigFile();
+  cachedGlobalConfig = globalConfig;
 
   // Validate and resolve paths
   for (const profile of profiles) {
@@ -76,6 +112,17 @@ export function loadProfiles(): Profile[] {
 export function getProfile(name: string): Profile | undefined {
   const profiles = loadProfiles();
   return profiles.find((p) => p.name === name);
+}
+
+/**
+ * Load global config from config/profiles.json.
+ * Must call loadProfiles() first, or this will parse the file itself.
+ */
+export function loadGlobalConfig(): GlobalConfig {
+  if (cachedGlobalConfig) return cachedGlobalConfig;
+  const { global: globalConfig } = parseConfigFile();
+  cachedGlobalConfig = globalConfig;
+  return globalConfig;
 }
 
 /**
@@ -151,29 +198,38 @@ export function initConfig(): void {
     return;
   }
 
-  const defaultProfiles: Profile[] = [
-    {
-      name: 'test',
-      sourceFolders: ['input'],
-      recursive: true,
-      replaceFile: false,
-      outputFolder: 'output',
-      outputFormat: 'mkv',
-      cacheFolder: 'cache',
-      maxWidth: 1920,
-      maxHeight: 1080,
-      downscaleToMax: true,
-      renameFiles: true,
-      removeHDR: true,
-      nvencPreset: 'p4',
-      cqValue: 23,
-      log: true,
-      priority: 5,
-      minSizeReduction: 0,
+  const defaultConfig = {
+    global: {
+      webui: false,
+      webuiPort: 9800,
+      webuiUsername: 'admin',
+      webuiPassword: 'transcorder',
+      localAllow: true,
     },
-  ];
+    profiles: [
+      {
+        name: 'test',
+        sourceFolders: ['input'],
+        recursive: true,
+        replaceFile: false,
+        outputFolder: 'output',
+        outputFormat: 'mkv',
+        cacheFolder: 'cache',
+        maxWidth: 1920,
+        maxHeight: 1080,
+        downscaleToMax: true,
+        renameFiles: true,
+        removeHDR: true,
+        nvencPreset: 'p4',
+        cqValue: 23,
+        log: true,
+        priority: 5,
+        minSizeReduction: 0,
+      },
+    ],
+  };
 
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultProfiles, null, 2) + '\n');
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaultConfig, null, 2) + '\n');
   logger.success(`Created default config: ${CONFIG_PATH}`);
 }
 

@@ -13,16 +13,26 @@ export interface TranscodeCallbacks {
   onError?: (error: Error) => void;
 }
 
+export interface TranscodeHandle {
+  /** Promise that resolves with the output path on completion */
+  promise: Promise<string>;
+  /** Kill the ffmpeg process immediately */
+  kill: () => void;
+}
+
 /**
  * Transcode a video file according to the profile settings.
- * Returns the path to the transcoded file in the cache folder.
+ * Returns a handle with the promise and a kill function to abort.
  */
 export function transcode(
   checkResult: CheckResult,
   profile: Profile,
   callbacks?: TranscodeCallbacks,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
+): TranscodeHandle {
+  let cmd: ReturnType<typeof ffmpeg> | undefined;
+  const kill = () => { cmd?.kill('SIGKILL'); };
+
+  const promise = new Promise<string>((resolve, reject) => {
     const { metadata, targetWidth, targetHeight } = checkResult;
     const { filePath, fileName } = metadata;
 
@@ -52,7 +62,7 @@ export function transcode(
     logger.debug(`Target: ${targetWidth}x${targetHeight}, HDR removal: ${metadata.isHDR && profile.removeHDR}`);
 
     // Build the ffmpeg command
-    const cmd = ffmpeg(filePath);
+    cmd = ffmpeg(filePath);
 
     // ── Video filters ──────────────────────────────────────────────────────
     const needsScale = metadata.video.width > targetWidth || metadata.video.height > targetHeight;
@@ -193,6 +203,8 @@ export function transcode(
 
     cmd.run();
   });
+
+  return { promise, kill };
 }
 
 /**

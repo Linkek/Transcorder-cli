@@ -6,6 +6,7 @@ import { moveFile, formatFileSize, formatDuration, buildOutputFileName } from '.
 import { logger } from './logger.js';
 import { analyzeFile } from './check.js';
 import { transcode, replaceOriginal } from './transcode.js';
+import type { TranscodeHandle } from './transcode.js';
 import { formatResolution, probeFile } from './ffmpeg.js';
 import { removeCacheFile } from './cache.js';
 import {
@@ -38,6 +39,10 @@ import type { Profile } from '../types/index.js';
 const MAX_CONCURRENT = NUM_WORKERS;
 const workerSlots: boolean[] = Array(MAX_CONCURRENT).fill(false);
 let processing = false;
+let paused = false;
+
+/** Track active transcode handles per worker slot so we can kill them on pause */
+const activeTranscodes = new Map<number, { handle: TranscodeHandle; jobId: number; filePath: string; profile: Profile }>();
 
 interface QueueItem {
   filePath: string;
@@ -101,6 +106,8 @@ export function queueFile(filePath: string, profile: Profile): void {
  * Process the next item in the queue if workers are available.
  */
 function processNext(): void {
+  if (paused) return;
+
   const slot = acquireSlot();
   if (slot === -1) return;
 
@@ -236,7 +243,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
 
     const startTime = Date.now();
 
-    const cachePath = await transcode(checkResult, profile, {
+    const handle = transcode(checkResult, profile, {
       onProgress: (progress) => {
         updateWorkerProgress(slot, progress);
       },
@@ -244,6 +251,16 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
         logger.debug(`FFmpeg started: ${cmd.slice(0, 200)}...`);
       },
     });
+
+    // Register active transcode so pause can kill it
+    activeTranscodes.set(slot, { handle, jobId: job.id, filePath, profile });
+
+    let cachePath: string;
+    try {
+      cachePath = await handle.promise;
+    } finally {
+      activeTranscodes.delete(slot);
+    }
 
     // ── Step 3: Check size reduction ───────────────────────────────────────
     const originalSize = metadata.fileSize;
@@ -313,6 +330,16 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
     logger.success(`${fileName} → ${path.basename(outputPath)} (${formatFileSize(outputSize)}${savedStr})`);
 
   } catch (error) {
+    // If killed by pause, reset to pending — don't mark as failed
+    if (paused) {
+      updateJobStatus(job.id, 'pending');
+      clearWorker(slot);
+      if (expectedCachePath) {
+        removeCacheFile(expectedCachePath);
+      }
+      return;
+    }
+
     const errMsg = error instanceof Error ? error.message : String(error);
     updateJobStatus(job.id, 'failed', { error: errMsg });
     updateDashboardStats({ failed: 1 });
@@ -361,9 +388,42 @@ export function resumePendingJobs(profiles: Profile[]): void {
 /**
  * Get current queue status.
  */
-export function getQueueStatus(): { active: number; pending: number } {
+export function getQueueStatus(): { active: number; pending: number; paused: boolean } {
   return {
     active: activeWorkerCount(),
     pending: pendingQueue.length,
+    paused,
   };
+}
+
+/**
+ * Pause queue processing. Kills all active transcodes and resets their jobs to pending.
+ */
+export function pauseQueue(): void {
+  paused = true;
+
+  // Kill all active ffmpeg processes
+  for (const [slot, entry] of activeTranscodes) {
+    logger.info(`Killing active transcode on worker ${slot}: ${path.basename(entry.filePath)}`);
+    entry.handle.kill();
+  }
+
+  logger.info('Queue paused — all workers stopped');
+}
+
+/**
+ * Resume queue processing.
+ */
+export function resumeQueue(): void {
+  paused = false;
+  logger.info('Queue resumed');
+  // Kick off processing for any pending items
+  processNext();
+}
+
+/**
+ * Check if queue is paused.
+ */
+export function isQueuePaused(): boolean {
+  return paused;
 }

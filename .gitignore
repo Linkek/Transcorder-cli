@@ -17,3 +17,5 @@ live-data/
 *.log
 *.db
 tmp-test-clips/
+web/node_modules/
+web/dist/

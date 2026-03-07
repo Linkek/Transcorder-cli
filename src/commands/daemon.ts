@@ -1,14 +1,15 @@
 import chalk from 'chalk';
 import path from 'node:path';
 import { logger } from '../lib/logger.js';
-import { loadProfiles } from '../lib/profiles.js';
+import { loadProfiles, loadGlobalConfig } from '../lib/profiles.js';
 import { closeDb, getStats, hasCompletedJob, markInterruptedJobsAsFailed } from '../lib/db.js';
 import { analyzeFile } from '../lib/check.js';
-import { queueFile, resumePendingJobs } from '../lib/queue.js';
+import { queueFile, resumePendingJobs, pauseQueue, resumeQueue, isQueuePaused } from '../lib/queue.js';
 import { startWatching, stopWatching, scanFolder } from '../lib/watcher.js';
 import { clearAllCaches } from '../lib/cache.js';
 import { showBanner } from '../lib/display.js';
 import { destroyDashboard, setDashboardStats } from '../lib/dashboard.js';
+import { startWebUI } from '../lib/webui.js';
 import { enableLoggingIfNeeded } from './shared.js';
 
 export async function startDaemon(verbose: boolean): Promise<void> {
@@ -35,6 +36,41 @@ export async function startDaemon(verbose: boolean): Promise<void> {
     skipped: dbStats.skipped,
     savedBytes: dbStats.savedBytes,
   });
+
+  // ── Start Web UI if enabled ──
+  const globalConfig = loadGlobalConfig();
+  let stopWebUI: (() => void) | null = null;
+  if (globalConfig.webui) {
+    stopWebUI = startWebUI(globalConfig);
+  }
+
+  // ── Pause on startup if configured ──
+  if (globalConfig.pauseOnStartup) {
+    pauseQueue();
+    logger.info('Queue paused on startup (pauseOnStartup is enabled)');
+  }
+
+  // ── CLI keyboard shortcut: 'p' to toggle pause/resume ──
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (key: string) => {
+      if (key === 'p' || key === 'P') {
+        if (isQueuePaused()) {
+          resumeQueue();
+          logger.info('Queue resumed via keyboard');
+        } else {
+          pauseQueue();
+          logger.info('Queue paused via keyboard');
+        }
+      }
+      // Ctrl+C
+      if (key === '\u0003') {
+        process.emit('SIGINT');
+      }
+    });
+  }
 
   // ── Initial scan: process all existing files first ──
   let totalFiles = 0;
@@ -78,13 +114,14 @@ export async function startDaemon(verbose: boolean): Promise<void> {
     },
   });
 
-  logger.info('Daemon watching for changes. Press Ctrl+C to stop.');
+  logger.info('Daemon watching for changes. Press [p] to pause/resume, Ctrl+C to stop.');
   logger.blank();
 
   // Keep alive
   await new Promise<void>((resolve) => {
     const shutdown = async () => {
       destroyDashboard();
+      if (stopWebUI) stopWebUI();
       logger.blank();
       logger.info('Shutting down...');
       await stopWatching(watchers);
