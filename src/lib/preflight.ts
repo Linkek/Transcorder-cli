@@ -30,6 +30,18 @@ const NO_BITMAP_SUBS_CONTAINERS = new Set([
   'mp4', 'm4v', 'mov', 'webm',
 ]);
 
+// ─── MP4-only subtitle codecs (only work in MP4/MOV containers) ─────────────
+
+const MP4_ONLY_SUBTITLE_CODECS = new Set([
+  'mov_text', 'tx3g',
+]);
+
+// ─── Containers that support MP4-native subtitle codecs ─────────────────────
+
+const MP4_FAMILY_CONTAINERS = new Set([
+  'mp4', 'm4v', 'mov',
+]);
+
 // ─── Interlaced field orders ────────────────────────────────────────────────
 
 const INTERLACED_FIELD_ORDERS = new Set([
@@ -148,23 +160,28 @@ export function detectSubtitleIssues(
     return { action: 'copy-all' };
   }
 
-  // If the container supports all sub types, copy everything
   const format = outputFormat.toLowerCase();
-  if (!NO_BITMAP_SUBS_CONTAINERS.has(format)) {
-    return { action: 'copy-all' };
-  }
 
-  // Check each subtitle stream
+  // Check each subtitle stream for compatibility with the target container
   const compatibleIndices: number[] = [];
   let hasIncompatible = false;
 
   for (const sub of metadata.subtitleStreams) {
     const codec = sub.codec_name.toLowerCase();
-    if (BITMAP_SUBTITLE_CODECS.has(codec)) {
+
+    // Bitmap subs can't go in MP4/MOV/WEBM
+    if (BITMAP_SUBTITLE_CODECS.has(codec) && NO_BITMAP_SUBS_CONTAINERS.has(format)) {
       hasIncompatible = true;
-    } else {
-      compatibleIndices.push(sub.index);
+      continue;
     }
+
+    // MP4-only subtitle codecs (mov_text/tx3g) can only go in MP4/MOV
+    if (MP4_ONLY_SUBTITLE_CODECS.has(codec) && !MP4_FAMILY_CONTAINERS.has(format)) {
+      hasIncompatible = true;
+      continue;
+    }
+
+    compatibleIndices.push(sub.index);
   }
 
   if (!hasIncompatible) {
@@ -177,7 +194,7 @@ export function detectSubtitleIssues(
 
   return {
     action: 'drop-all',
-    reason: `All subtitle streams are bitmap-based and incompatible with .${format}`,
+    reason: `All subtitle streams are incompatible with .${format}`,
   };
 }
 

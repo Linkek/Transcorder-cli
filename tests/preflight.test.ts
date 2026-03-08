@@ -131,7 +131,7 @@ describe('detectSubtitleIssues', () => {
     const result = detectSubtitleIssues(metadata, 'mp4')
     expect(result.action).toBe('drop-all')
     if (result.action === 'drop-all') {
-      expect(result.reason).toContain('bitmap-based')
+      expect(result.reason).toContain('incompatible')
       expect(result.reason).toContain('.mp4')
     }
   })
@@ -167,6 +167,108 @@ describe('detectSubtitleIssues', () => {
     expect(result.action).toBe('copy-compatible')
     if (result.action === 'copy-compatible') {
       expect(result.indices).toEqual([3])
+    }
+  })
+
+  // ── mov_text / MP4-only subtitle codec handling ──────────────────────────
+
+  it('should drop mov_text subtitles when output is MKV', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mkv')
+    expect(result.action).toBe('drop-all')
+    if (result.action === 'drop-all') {
+      expect(result.reason).toContain('incompatible')
+      expect(result.reason).toContain('.mkv')
+    }
+  })
+
+  it('should keep mov_text subtitles when output is MP4', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mp4')
+    expect(result.action).toBe('copy-all')
+  })
+
+  it('should keep mov_text subtitles when output is MOV', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mov')
+    expect(result.action).toBe('copy-all')
+  })
+
+  it('should drop tx3g subtitles when output is MKV', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'tx3g' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mkv')
+    expect(result.action).toBe('drop-all')
+  })
+
+  it('should drop mov_text subtitles when output is WEBM', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'webm')
+    expect(result.action).toBe('drop-all')
+  })
+
+  it('should keep compatible subs and drop mov_text when mixed and output is MKV', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+        { index: 3, codec_name: 'srt' },
+        { index: 4, codec_name: 'ass' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mkv')
+    expect(result.action).toBe('copy-compatible')
+    if (result.action === 'copy-compatible') {
+      expect(result.indices).toEqual([3, 4])
+    }
+  })
+
+  it('should handle both mov_text and bitmap subs going to MKV (bitmap ok, mov_text not)', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+        { index: 3, codec_name: 'hdmv_pgs_subtitle' },
+        { index: 4, codec_name: 'srt' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mkv')
+    expect(result.action).toBe('copy-compatible')
+    if (result.action === 'copy-compatible') {
+      // PGS is fine in MKV, mov_text is not. SRT is fine too.
+      expect(result.indices).toEqual([3, 4])
+    }
+  })
+
+  it('should handle both mov_text and bitmap subs going to MP4', () => {
+    const metadata = makeMetadata({
+      subtitleStreams: [
+        { index: 2, codec_name: 'mov_text' },
+        { index: 3, codec_name: 'hdmv_pgs_subtitle' },
+      ],
+    })
+    const result = detectSubtitleIssues(metadata, 'mp4')
+    // mov_text is fine in MP4, PGS is not
+    expect(result.action).toBe('copy-compatible')
+    if (result.action === 'copy-compatible') {
+      expect(result.indices).toEqual([2])
     }
   })
 })
@@ -750,4 +852,143 @@ describe('buildStrategyCascade', () => {
       expect(cpuFallback.videoOutputOptions.some(o => o.includes('-crf 22'))).toBe(true)
     })
   })
+
+  describe('subtitle mapping in strategies', () => {
+    it('should map all subtitles when decision is copy-all', () => {
+      const metadata = makeMetadata({ isHDR: false })
+      const profile = makeProfile()
+      const checkResult = makeCheckResult({ targetWidth: 1920, targetHeight: 1080 })
+      const ctx = {
+        isInterlaced: false,
+        pixFmtCheck: { compatible: true },
+        subtitleDecision: { action: 'copy-all' } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      for (const s of strategies) {
+        expect(s.subtitleMapping).toBe('all')
+      }
+    })
+
+    it('should map no subtitles when decision is drop-all', () => {
+      const metadata = makeMetadata({ isHDR: false })
+      const profile = makeProfile()
+      const checkResult = makeCheckResult({ targetWidth: 1920, targetHeight: 1080 })
+      const ctx = {
+        isInterlaced: false,
+        pixFmtCheck: { compatible: true },
+        subtitleDecision: { action: 'drop-all', reason: 'incompatible MP4' } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      for (const s of strategies) {
+        expect(s.subtitleMapping).toBe('none')
+      }
+    })
+
+    it('should map compatible indices when decision is copy-compatible', () => {
+      const metadata = makeMetadata({ isHDR: false })
+      const profile = makeProfile()
+      const checkResult = makeCheckResult({ targetWidth: 1920, targetHeight: 1080 })
+      const ctx = {
+        isInterlaced: false,
+        pixFmtCheck: { compatible: true },
+        subtitleDecision: { action: 'copy-compatible', indices: [2, 4] } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      for (const s of strategies) {
+        expect(s.subtitleMapping).toEqual([2, 4])
+      }
+    })
+  })
+
+  describe('edge cases', () => {
+    it('should handle file with no audio streams', () => {
+      const metadata = makeMetadata({ isHDR: false, audioStreams: [] })
+      const profile = makeProfile()
+      const checkResult = makeCheckResult({
+        targetWidth: 1920,
+        targetHeight: 1080,
+        metadata,
+      })
+      const ctx = {
+        isInterlaced: false,
+        pixFmtCheck: { compatible: true },
+        subtitleDecision: { action: 'copy-all' } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      expect(strategies.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('should handle extreme CQ values', () => {
+      const metadata = makeMetadata({ isHDR: false })
+      const profile = makeProfile({ cqValue: 0 })
+      const checkResult = makeCheckResult({ targetWidth: 1920, targetHeight: 1080 })
+      const ctx = {
+        isInterlaced: false,
+        pixFmtCheck: { compatible: true },
+        subtitleDecision: { action: 'copy-all' } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      const gpuStrategy = strategies.find(s => s.gpuEncode)!
+      expect(gpuStrategy.videoOutputOptions.some(o => o.includes('-cq:v 0'))).toBe(true)
+    })
+
+    it('should handle combined interlaced + HDR removal', () => {
+      const metadata = makeMetadata({
+        isHDR: true,
+        hdrFormat: 'HDR10',
+        video: {
+          width: 3840,
+          height: 2160,
+          pix_fmt: 'yuv420p10le',
+          color_transfer: 'smpte2084',
+          color_primaries: 'bt2020',
+          field_order: 'tt',
+        } as any,
+      })
+      const profile = makeProfile({ removeHDR: true })
+      const checkResult = makeCheckResult({
+        targetWidth: 1920,
+        targetHeight: 1080,
+        metadata,
+      })
+      const ctx = {
+        isInterlaced: true,
+        pixFmtCheck: { compatible: false, conversion: 'p010le' },
+        subtitleDecision: { action: 'copy-all' } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      // Should have strategies for this complex case
+      expect(strategies.length).toBeGreaterThanOrEqual(2)
+      // CPU fallback should exist for worst case
+      expect(strategies.some(s => !s.gpuEncode)).toBe(true)
+    })
+
+    it('should handle same dimensions (no downscale needed)', () => {
+      const metadata = makeMetadata({
+        isHDR: false,
+        video: { width: 1920, height: 1080, pix_fmt: 'yuv420p' } as any,
+      })
+      const profile = makeProfile()
+      const checkResult = makeCheckResult({
+        targetWidth: 1920,
+        targetHeight: 1080,
+        metadata,
+      })
+      const ctx = {
+        isInterlaced: false,
+        pixFmtCheck: { compatible: true },
+        subtitleDecision: { action: 'copy-all' } as SubtitleDecision,
+      }
+
+      const strategies = buildStrategyCascade(metadata, profile, checkResult, ctx)
+      expect(strategies.length).toBeGreaterThanOrEqual(2)
+    })
+  })
 })
+

@@ -3,6 +3,8 @@ import {
   buildOutputFileName,
   cleanFileName,
   extractResolutionTag,
+  formatFileSize,
+  formatDuration,
 } from '../src/lib/utils.js';
 
 describe('buildOutputFileName', () => {
@@ -398,5 +400,81 @@ describe('extractResolutionTag', () => {
 
   it('should return first tag if multiple present', () => {
     expect(extractResolutionTag('Movie.2160p.to-1080p.mkv')).toBe('2160p');
+  });
+});
+
+describe('formatFileSize', () => {
+  it('should format bytes', () => {
+    expect(formatFileSize(512)).toBe('512 B');
+  });
+
+  it('should format kilobytes', () => {
+    expect(formatFileSize(1024)).toBe('1.0 KB');
+  });
+
+  it('should format kilobytes with decimal', () => {
+    expect(formatFileSize(1536)).toBe('1.5 KB');
+  });
+
+  it('should format megabytes', () => {
+    expect(formatFileSize(1024 * 1024)).toBe('1.0 MB');
+  });
+
+  it('should format megabytes with decimal', () => {
+    expect(formatFileSize(1.5 * 1024 * 1024)).toBe('1.5 MB');
+  });
+
+  it('should format large megabytes', () => {
+    expect(formatFileSize(500 * 1024 * 1024)).toBe('500.0 MB');
+  });
+
+  it('should format gigabytes', () => {
+    expect(formatFileSize(1024 * 1024 * 1024)).toBe('1.00 GB');
+  });
+
+  it('should format gigabytes with decimal', () => {
+    expect(formatFileSize(2.5 * 1024 * 1024 * 1024)).toBe('2.50 GB');
+  });
+
+  it('should format large gigabytes', () => {
+    expect(formatFileSize(10 * 1024 * 1024 * 1024)).toBe('10.00 GB');
+  });
+
+  it('should handle zero', () => {
+    expect(formatFileSize(0)).toBe('0 B');
+  });
+});
+
+describe('formatDuration', () => {
+  it('should format seconds only', () => {
+    expect(formatDuration(45)).toBe('45s');
+  });
+
+  it('should format minutes and seconds', () => {
+    expect(formatDuration(125)).toBe('2m 5s');
+  });
+
+  it('should format exact minutes', () => {
+    expect(formatDuration(120)).toBe('2m 0s');
+  });
+
+  it('should format hours, minutes, and seconds', () => {
+    expect(formatDuration(3725)).toBe('1h 2m 5s');
+  });
+
+  it('should format exact hours', () => {
+    expect(formatDuration(3600)).toBe('1h 0m 0s');
+  });
+
+  it('should format multiple hours', () => {
+    expect(formatDuration(7265)).toBe('2h 1m 5s');
+  });
+
+  it('should handle zero', () => {
+    expect(formatDuration(0)).toBe('0s');
+  });
+
+  it('should truncate decimals', () => {
+    expect(formatDuration(45.7)).toBe('45s');
   });
 });

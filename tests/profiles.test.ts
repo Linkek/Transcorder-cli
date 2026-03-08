@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateProfile } from '../src/lib/profiles.js';
+import { validateProfile, formatProfiles } from '../src/lib/profiles.js';
 import type { Profile } from '../src/types/index.js';
 
 const createValidProfile = (overrides: Partial<Profile> = {}): Partial<Profile> => ({
@@ -398,5 +398,146 @@ describe('validateProfile', () => {
       const errors = validateProfile(profile);
       expect(errors.length).toBe(3);
     });
+  });
+});
+
+// ─── formatProfiles ─────────────────────────────────────────────────────────
+
+describe('formatProfiles', () => {
+  const makeProfile = (overrides: Partial<Profile> = {}): Profile => ({
+    name: 'movies',
+    sourceFolders: ['/input/movies'],
+    recursive: true,
+    replaceFile: false,
+    outputFormat: 'mkv',
+    cacheFolder: '/cache',
+    maxWidth: 1920,
+    maxHeight: 1080,
+    downscaleToMax: true,
+    renameFiles: true,
+    removeHDR: false,
+    nvencPreset: 'p5',
+    cqValue: 28,
+    log: true,
+    priority: 5,
+    minSizeReduction: 2,
+    ...overrides,
+  });
+
+  it('should include profile name', () => {
+    const result = formatProfiles([makeProfile({ name: 'test-profile' })]);
+    expect(result).toContain('Profile: test-profile');
+  });
+
+  it('should include source folders', () => {
+    const result = formatProfiles([makeProfile({ sourceFolders: ['/movies', '/tv'] })]);
+    expect(result).toContain('/movies, /tv');
+  });
+
+  it('should show recursive status', () => {
+    const yes = formatProfiles([makeProfile({ recursive: true })]);
+    expect(yes).toContain('Recursive:     yes');
+
+    const no = formatProfiles([makeProfile({ recursive: false })]);
+    expect(no).toContain('Recursive:     no');
+  });
+
+  it('should show replaceFile status', () => {
+    const yes = formatProfiles([makeProfile({ replaceFile: true })]);
+    expect(yes).toContain('Replace file:  yes');
+
+    const no = formatProfiles([makeProfile({ replaceFile: false })]);
+    expect(no).toContain('Replace file:  no');
+  });
+
+  it('should show output folder when set', () => {
+    const result = formatProfiles([makeProfile({ outputFolder: '/output/movies' })]);
+    expect(result).toContain('Output folder: /output/movies');
+  });
+
+  it('should not show output folder when undefined', () => {
+    const result = formatProfiles([makeProfile({ outputFolder: undefined })]);
+    expect(result).not.toContain('Output folder:');
+  });
+
+  it('should show output format', () => {
+    const result = formatProfiles([makeProfile({ outputFormat: 'mp4' })]);
+    expect(result).toContain('Output format: mp4');
+  });
+
+  it('should show cache folder', () => {
+    const result = formatProfiles([makeProfile({ cacheFolder: '/tmp/cache' })]);
+    expect(result).toContain('Cache folder:  /tmp/cache');
+  });
+
+  it('should show max resolution', () => {
+    const result = formatProfiles([makeProfile({ maxWidth: 3840, maxHeight: 2160 })]);
+    expect(result).toContain('Max resolution: 3840x2160');
+  });
+
+  it('should show downscale status', () => {
+    const yes = formatProfiles([makeProfile({ downscaleToMax: true })]);
+    expect(yes).toContain('Downscale:     yes');
+
+    const no = formatProfiles([makeProfile({ downscaleToMax: false })]);
+    expect(no).toContain('Downscale:     no');
+  });
+
+  it('should show rename files status', () => {
+    const yes = formatProfiles([makeProfile({ renameFiles: true })]);
+    expect(yes).toContain('Rename files:  yes');
+
+    const no = formatProfiles([makeProfile({ renameFiles: false })]);
+    expect(no).toContain('Rename files:  no');
+  });
+
+  it('should show remove HDR status', () => {
+    const yes = formatProfiles([makeProfile({ removeHDR: true })]);
+    expect(yes).toContain('Remove HDR:    yes');
+
+    const no = formatProfiles([makeProfile({ removeHDR: false })]);
+    expect(no).toContain('Remove HDR:    no');
+  });
+
+  it('should show NVENC preset', () => {
+    const result = formatProfiles([makeProfile({ nvencPreset: 'p7' })]);
+    expect(result).toContain('NVENC preset:  p7');
+  });
+
+  it('should show CQ value', () => {
+    const result = formatProfiles([makeProfile({ cqValue: 18 })]);
+    expect(result).toContain('CQ value:      18');
+  });
+
+  it('should show logging status', () => {
+    const yes = formatProfiles([makeProfile({ log: true })]);
+    expect(yes).toContain('Logging:       yes');
+
+    const no = formatProfiles([makeProfile({ log: false })]);
+    expect(no).toContain('Logging:       no');
+  });
+
+  it('should show priority', () => {
+    const result = formatProfiles([makeProfile({ priority: 8 })]);
+    expect(result).toContain('Priority:      8');
+  });
+
+  it('should show min size reduction', () => {
+    const result = formatProfiles([makeProfile({ minSizeReduction: 5 })]);
+    expect(result).toContain('Min reduction: 5%');
+  });
+
+  it('should format multiple profiles', () => {
+    const result = formatProfiles([
+      makeProfile({ name: 'movies' }),
+      makeProfile({ name: 'tv' }),
+    ]);
+    expect(result).toContain('Profile: movies');
+    expect(result).toContain('Profile: tv');
+  });
+
+  it('should return empty string for empty array', () => {
+    const result = formatProfiles([]);
+    expect(result).toBe('');
   });
 });

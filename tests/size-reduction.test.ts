@@ -1,23 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import {
+  calculateReductionPercent,
+  shouldSkipDueToSizeReduction,
+} from '../src/lib/utils.js';
 
 /**
  * Tests for size reduction calculation logic.
- * The actual implementation is inline in queue.ts, these tests verify the math.
+ * These functions are used in queue.ts to decide if a transcode result should be kept or skipped.
  */
-
-function calculateReductionPercent(originalSize: number, transcodedSize: number): number {
-  return ((originalSize - transcodedSize) / originalSize) * 100;
-}
-
-function shouldSkipDueToSizeReduction(
-  originalSize: number,
-  transcodedSize: number,
-  minSizeReduction: number,
-): boolean {
-  if (minSizeReduction <= 0) return false;
-  const reductionPercent = calculateReductionPercent(originalSize, transcodedSize);
-  return reductionPercent < minSizeReduction;
-}
 
 describe('Size Reduction Calculation', () => {
   describe('calculateReductionPercent', () => {
@@ -54,12 +44,28 @@ describe('Size Reduction Calculation', () => {
       const result = calculateReductionPercent(original, transcoded);
       expect(result).toBeCloseTo(67.2, 1);
     });
+
+    it('should handle very large files (10GB+)', () => {
+      const original = 10_737_418_240; // 10GB
+      const transcoded = 3_221_225_472; // 3GB
+      const result = calculateReductionPercent(original, transcoded);
+      expect(result).toBeCloseTo(70, 0);
+    });
+
+    it('should handle very small reduction', () => {
+      const result = calculateReductionPercent(1_000_000, 999_000);
+      expect(result).toBeCloseTo(0.1, 1);
+    });
   });
 
   describe('shouldSkipDueToSizeReduction', () => {
     it('should not skip when minSizeReduction is 0', () => {
       expect(shouldSkipDueToSizeReduction(1000, 1000, 0)).toBe(false);
       expect(shouldSkipDueToSizeReduction(1000, 1200, 0)).toBe(false);
+    });
+
+    it('should not skip when minSizeReduction is negative', () => {
+      expect(shouldSkipDueToSizeReduction(1000, 1200, -5)).toBe(false);
     });
 
     it('should not skip when reduction meets threshold', () => {
@@ -98,6 +104,16 @@ describe('Size Reduction Calculation', () => {
     it('should handle real-world scenario - minimal reduction', () => {
       // 1GB -> 980MB (2% reduction), require 5%
       expect(shouldSkipDueToSizeReduction(1000000000, 980000000, 5)).toBe(true);
+    });
+
+    it('should handle 100% threshold (only skip if 100% reduction)', () => {
+      expect(shouldSkipDueToSizeReduction(1000, 1, 100)).toBe(true);
+      expect(shouldSkipDueToSizeReduction(1000, 0, 100)).toBe(false);
+    });
+
+    it('should not skip when reduction far exceeds threshold', () => {
+      // 90% reduction, require 5%
+      expect(shouldSkipDueToSizeReduction(10000, 1000, 5)).toBe(false);
     });
   });
 });

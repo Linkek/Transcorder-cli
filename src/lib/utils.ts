@@ -209,3 +209,25 @@ export function formatDuration(seconds: number): string {
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
+
+/**
+ * Calculate the percentage reduction between original and transcoded file size.
+ * Returns a positive value if the file got smaller, negative if it grew.
+ */
+export function calculateReductionPercent(originalSize: number, transcodedSize: number): number {
+  return ((originalSize - transcodedSize) / originalSize) * 100;
+}
+
+/**
+ * Determine whether a transcode should be skipped due to insufficient size reduction.
+ * Returns true if the reduction is below the minimum threshold (i.e., should skip).
+ */
+export function shouldSkipDueToSizeReduction(
+  originalSize: number,
+  transcodedSize: number,
+  minSizeReduction: number,
+): boolean {
+  if (minSizeReduction <= 0) return false;
+  const reductionPercent = calculateReductionPercent(originalSize, transcodedSize);
+  return reductionPercent < minSizeReduction;
+}

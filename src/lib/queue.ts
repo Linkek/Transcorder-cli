@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import chalk from 'chalk';
 import figures from 'figures';
-import { moveFile, formatFileSize, formatDuration, buildOutputFileName } from './utils.js';
+import { moveFile, formatFileSize, formatDuration, buildOutputFileName, calculateReductionPercent, shouldSkipDueToSizeReduction } from './utils.js';
 import { logger } from './logger.js';
 import { analyzeFile } from './check.js';
 import { transcode, replaceOriginal } from './transcode.js';
@@ -300,9 +300,9 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
     // ── Step 3: Check size reduction ───────────────────────────────────────
     const originalSize = metadata.fileSize;
     const transcodedSize = fs.statSync(cachePath).size;
-    const reductionPercent = ((originalSize - transcodedSize) / originalSize) * 100;
+    const reductionPercent = calculateReductionPercent(originalSize, transcodedSize);
 
-    if (profile.minSizeReduction > 0 && reductionPercent < profile.minSizeReduction) {
+    if (shouldSkipDueToSizeReduction(originalSize, transcodedSize, profile.minSizeReduction)) {
       // Not enough size reduction, skip this file
       removeCacheFile(cachePath);
       updateJobStatus(job.id, 'skipped');

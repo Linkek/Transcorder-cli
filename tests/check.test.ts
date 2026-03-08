@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { calculateTargetResolution } from '../src/lib/check.js';
+import { calculateTargetResolution, formatAnalysis } from '../src/lib/check.js';
+import type { CheckResult, VideoMetadata } from '../src/types/index.js';
 
 describe('calculateTargetResolution', () => {
   describe('when source is within limits', () => {
@@ -133,5 +134,162 @@ describe('calculateTargetResolution', () => {
       // Scale by height: 1080 height, width = 2160 * (1080/3840) = 607.5 → 608 (even)
       expect(result).toEqual({ targetWidth: 608, targetHeight: 1080 });
     });
+  });
+});
+
+// ─── formatAnalysis ─────────────────────────────────────────────────────────
+
+function makeMetadata(overrides: Partial<VideoMetadata> = {}): VideoMetadata {
+  return {
+    filePath: '/movies/test-movie.mkv',
+    fileName: 'test-movie.mkv',
+    fileSize: 5_000_000_000,
+    container: 'matroska',
+    duration: 7200,
+    ...overrides,
+    video: {
+      index: 0,
+      codec_name: 'hevc',
+      width: 3840,
+      height: 2160,
+      ...overrides.video,
+    } as VideoMetadata['video'],
+    audioStreams: overrides.audioStreams ?? [
+      { index: 1, codec_name: 'aac', channels: 2 },
+    ],
+    subtitleStreams: overrides.subtitleStreams ?? [],
+    isHDR: overrides.isHDR ?? false,
+    hdrFormat: overrides.hdrFormat,
+  };
+}
+
+function makeCheckResult(overrides: Partial<CheckResult> = {}): CheckResult {
+  return {
+    needsTranscode: true,
+    reasons: ['Resolution exceeds max'],
+    metadata: makeMetadata(),
+    targetWidth: 1920,
+    targetHeight: 1080,
+    ...overrides,
+  };
+}
+
+describe('formatAnalysis', () => {
+  it('should include file name in output', () => {
+    const result = formatAnalysis(makeCheckResult());
+    expect(result).toContain('test-movie.mkv');
+  });
+
+  it('should include resolution', () => {
+    const result = formatAnalysis(makeCheckResult());
+    expect(result).toContain('3840x2160');
+  });
+
+  it('should include codec', () => {
+    const result = formatAnalysis(makeCheckResult());
+    expect(result).toContain('hevc');
+  });
+
+  it('should show HDR as Yes when file is HDR', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({ isHDR: true, hdrFormat: 'HDR10' }),
+    }));
+    expect(result).toContain('Yes (HDR10)');
+  });
+
+  it('should show HDR as No when file is SDR', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({ isHDR: false }),
+    }));
+    expect(result).toContain('HDR:        No');
+  });
+
+  it('should show duration in minutes and seconds', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({ duration: 5430 }), // 90m 30s
+    }));
+    expect(result).toContain('90m 30s');
+  });
+
+  it('should show audio stream count and codecs', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({
+        audioStreams: [
+          { index: 1, codec_name: 'aac', channels: 2 },
+          { index: 2, codec_name: 'dts', channels: 6 },
+        ],
+      }),
+    }));
+    expect(result).toContain('2 stream(s)');
+    expect(result).toContain('aac, dts');
+  });
+
+  it('should show subtitle stream count', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({
+        subtitleStreams: [
+          { index: 3, codec_name: 'srt' },
+          { index: 4, codec_name: 'ass' },
+        ],
+      }),
+    }));
+    expect(result).toContain('2 stream(s)');
+  });
+
+  it('should show file size in MB', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({ fileSize: 1_500_000_000 }),
+    }));
+    expect(result).toContain('1430.5 MB');
+  });
+
+  it('should show YES when transcode is needed', () => {
+    const result = formatAnalysis(makeCheckResult({ needsTranscode: true }));
+    expect(result).toContain('Transcode:  YES');
+  });
+
+  it('should show NO (skip) when transcode is not needed', () => {
+    const result = formatAnalysis(makeCheckResult({ needsTranscode: false }));
+    expect(result).toContain('Transcode:  NO (skip)');
+  });
+
+  it('should show target resolution when transcoding', () => {
+    const result = formatAnalysis(makeCheckResult({
+      needsTranscode: true,
+      targetWidth: 1920,
+      targetHeight: 1080,
+    }));
+    expect(result).toContain('Target:     1920x1080');
+  });
+
+  it('should not show target resolution when skipping', () => {
+    const result = formatAnalysis(makeCheckResult({
+      needsTranscode: false,
+      targetWidth: 1920,
+      targetHeight: 1080,
+    }));
+    expect(result).not.toContain('Target:');
+  });
+
+  it('should include all reasons', () => {
+    const result = formatAnalysis(makeCheckResult({
+      reasons: ['Resolution exceeds max', 'HDR detected'],
+    }));
+    expect(result).toContain('→ Resolution exceeds max');
+    expect(result).toContain('→ HDR detected');
+  });
+
+  it('should handle metadata with zero audio streams', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({ audioStreams: [] }),
+    }));
+    expect(result).toContain('0 stream(s)');
+  });
+
+  it('should handle zero duration', () => {
+    const result = formatAnalysis(makeCheckResult({
+      metadata: makeMetadata({ duration: 0 }),
+    }));
+    expect(result).toContain('0m 0s');
   });
 });
