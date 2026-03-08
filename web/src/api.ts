@@ -90,7 +90,8 @@ export interface Job {
   fileSize?: number;
 }
 
-export const getJobs = (limit = 200) => request<Job[]>(`/jobs?limit=${limit}`);
+export const getJobs = (status?: string) =>
+  request<Job[]>(`/jobs${status ? `?status=${status}` : ''}`);
 export const deleteJob = (id: number) =>
   request<{ ok: boolean }>(`/jobs/${id}`, { method: 'DELETE' });
 export const retryJob = (id: number) =>

@@ -173,7 +173,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
   let expectedCachePath: string | undefined;
 
   // Find the job in DB
-  const jobs = getJobsByStatus('pending');
+  const jobs = getJobsByStatus(['pending']);
   const job = jobs.find((j) => j.sourcePath === filePath);
   if (!job) {
     logger.warn(`No pending job found for: ${filePath}`);
@@ -393,7 +393,7 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
  * Process existing pending jobs from the database (on startup).
  */
 export function resumePendingJobs(profiles: Profile[]): void {
-  const pendingJobs = getJobsByStatus('pending');
+  const pendingJobs = getJobsByStatus(['pending']);
   if (pendingJobs.length === 0) return;
 
   logger.info(`Resuming ${pendingJobs.length} pending job(s) from previous session`);

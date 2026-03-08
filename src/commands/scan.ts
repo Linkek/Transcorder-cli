@@ -189,7 +189,7 @@ async function runScan(profiles: Profile[]): Promise<void> {
 }
 
 async function processQueuedFiles(profiles: Profile[]): Promise<void> {
-  const pendingJobs = getJobsByStatus('pending');
+  const pendingJobs = getJobsByStatus(['pending']);
 
   for (const job of pendingJobs) {
     const profile = profiles.find((p) => p.name === job.profileName);

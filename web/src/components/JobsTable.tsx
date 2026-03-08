@@ -60,7 +60,30 @@ const statusColors: Record<string, 'success' | 'error' | 'warning' | 'info' | 'd
 
 export default function JobsTable() {
   const queryClient = useQueryClient();
-  const { data: jobs = [], isLoading } = useQuery({ queryKey: ['jobs'], queryFn: () => getJobs(500) });
+
+  // Each status group gets its own independent query — no limits, all rows returned
+  const { data: completedJobs = [], isLoading: loadingCompleted } = useQuery({
+    queryKey: ['jobs', 'completed'],
+    queryFn: () => getJobs('completed'),
+    refetchInterval: 10_000,
+  });
+  const { data: pendingJobs = [], isLoading: loadingPending } = useQuery({
+    queryKey: ['jobs', 'active'],
+    queryFn: () => getJobs('pending,checking,preflight,transcoding,replacing'),
+    refetchInterval: 3_000,
+  });
+  const { data: failedJobs = [], isLoading: loadingFailed } = useQuery({
+    queryKey: ['jobs', 'failed'],
+    queryFn: () => getJobs('failed'),
+    refetchInterval: 10_000,
+  });
+  const { data: skippedJobs = [], isLoading: loadingSkipped } = useQuery({
+    queryKey: ['jobs', 'skipped'],
+    queryFn: () => getJobs('skipped'),
+    refetchInterval: 10_000,
+  });
+
+  const isLoading = loadingCompleted || loadingPending || loadingFailed || loadingSkipped;
 
   const deleteMut = useMutation({
     mutationFn: deleteJob,
@@ -76,13 +99,6 @@ export default function JobsTable() {
   });
 
   const [clearAnchor, setClearAnchor] = useState<null | HTMLElement>(null);
-
-  // Split jobs by status groups
-  const completedJobs = useMemo(() => jobs.filter((j) => j.status === 'completed'), [jobs]);
-  const activeStatuses = ['pending', 'checking', 'preflight', 'transcoding', 'replacing'];
-  const pendingJobs = useMemo(() => jobs.filter((j) => activeStatuses.includes(j.status)), [jobs]);
-  const failedJobs = useMemo(() => jobs.filter((j) => j.status === 'failed'), [jobs]);
-  const skippedJobs = useMemo(() => jobs.filter((j) => j.status === 'skipped'), [jobs]);
 
   const columns = useMemo<MRT_ColumnDef<Job>[]>(() => [
     {
@@ -342,13 +358,14 @@ function StatusSection({
     },
     enableColumnResizing: true,
     enableStickyHeader: true,
-    enablePagination: jobs.length > 25,
+    enableRowVirtualization: true,
+    enablePagination: false,
     enableTopToolbar: false,
-    enableBottomToolbar: jobs.length > 25,
+    enableBottomToolbar: false,
     muiTablePaperProps: {
       sx: { border: 'none', boxShadow: 'none', background: 'transparent' },
     },
-    muiTableContainerProps: { sx: { maxHeight: 400 } },
+    muiTableContainerProps: { sx: { maxHeight: 500 } },
   });
 
   return (

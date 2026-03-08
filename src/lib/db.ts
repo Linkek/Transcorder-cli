@@ -290,7 +290,7 @@ export function updateJobStatus(jobId: number, status: JobStatus, extra?: { outp
   d.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).run(...params);
 }
 
-export function getJobsByStatus(...statuses: JobStatus[]): Job[] {
+export function getJobsByStatus(statuses: JobStatus[]): Job[] {
   const d = getDb();
   const placeholders = statuses.map(() => '?').join(', ');
   return d.prepare(`
@@ -304,7 +304,7 @@ export function getJobsByStatus(...statuses: JobStatus[]): Job[] {
   `).all(...statuses) as Job[];
 }
 
-export function getAllJobs(limit = 50): Job[] {
+export function getAllJobs(): Job[] {
   const d = getDb();
   return d.prepare(`
     SELECT j.id, j.source_path as sourcePath, j.output_path as outputPath, j.status, j.profile_name as profileName,
@@ -313,8 +313,7 @@ export function getAllJobs(limit = 50): Job[] {
     FROM jobs j
     LEFT JOIN source_metadata m ON m.job_id = j.id
     ORDER BY j.created_at DESC
-    LIMIT ?
-  `).all(limit) as Job[];
+  `).all() as Job[];
 }
 
 export function getJobByPath(sourcePath: string): Job | undefined {

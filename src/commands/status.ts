@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { getAllJobs, getStats } from '../lib/db.js';
+import { getAllJobs, getJobsByStatus, getStats } from '../lib/db.js';
 import { showJobTable, showStatsBox } from '../lib/display.js';
 import { showMenuLoop, waitForKey } from '../lib/menu.js';
 import figures from 'figures';
@@ -13,7 +13,7 @@ export async function statusMenu(): Promise<void> {
         console.log();
         showStatsBox();
         console.log();
-        const jobs = getAllJobs(20);
+        const jobs = getAllJobs();
         showJobTable(jobs);
 
         // Show error details for any failed jobs
@@ -33,7 +33,7 @@ export async function statusMenu(): Promise<void> {
       description: 'Show all job history',
       action: async () => {
         console.log();
-        const jobs = getAllJobs(100);
+        const jobs = getAllJobs();
         showJobTable(jobs);
         await waitForKey();
       },
@@ -42,7 +42,7 @@ export async function statusMenu(): Promise<void> {
       label: 'Pending Jobs',
       action: async () => {
         console.log();
-        const jobs = getAllJobs(100).filter((j) => j.status === 'pending');
+        const jobs = getJobsByStatus(['pending']);
         showJobTable(jobs);
         await waitForKey();
       },
@@ -51,7 +51,7 @@ export async function statusMenu(): Promise<void> {
       label: 'Failed Jobs',
       action: async () => {
         console.log();
-        const jobs = getAllJobs(100).filter((j) => j.status === 'failed');
+        const jobs = getJobsByStatus(['failed']);
         showJobTable(jobs);
 
         if (jobs.length > 0) {
@@ -68,7 +68,7 @@ export async function statusMenu(): Promise<void> {
       label: 'Completed Jobs',
       action: async () => {
         console.log();
-        const jobs = getAllJobs(100).filter((j) => j.status === 'completed');
+        const jobs = getJobsByStatus(['completed']);
         showJobTable(jobs);
         await waitForKey();
       },

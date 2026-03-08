@@ -153,9 +153,16 @@ function createApp(config: GlobalConfig): express.Express {
   // ─── Jobs ───────────────────────────────────────────────────────────────
 
   app.get('/api/jobs', (req, res) => {
-    const limit = parseInt(req.query.limit as string) || 200;
-    const jobs = getAllJobs(limit);
-    res.json(jobs);
+    const statusParam = req.query.status as string | undefined;
+
+    if (statusParam) {
+      const statuses = statusParam.split(',').map((s) => s.trim()) as import('../types/index.js').JobStatus[];
+      const jobs = getJobsByStatus(statuses);
+      res.json(jobs);
+    } else {
+      const jobs = getAllJobs();
+      res.json(jobs);
+    }
   });
 
   app.delete('/api/jobs/:id', (req, res) => {
@@ -180,7 +187,7 @@ function createApp(config: GlobalConfig): express.Express {
     }
     try {
       // Find the failed job
-      const failedJobs = getJobsByStatus('failed');
+      const failedJobs = getJobsByStatus(['failed']);
       const job = failedJobs.find(j => j.id === id);
       if (!job) {
         res.status(404).json({ error: 'Failed job not found' });
