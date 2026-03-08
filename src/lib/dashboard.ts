@@ -13,6 +13,8 @@ interface WorkerState {
   hdr: boolean;
   removeHDR: boolean;
   progress: TranscodeProgress | null;
+  /** Current phase: 'preflight' during pre-flight testing, 'transcoding' during actual encode */
+  phase: 'preflight' | 'transcoding';
 }
 
 interface DashboardStats {
@@ -139,8 +141,9 @@ export function setWorker(
   targetRes: string,
   hdr: boolean,
   removeHDR: boolean,
+  phase: 'preflight' | 'transcoding' = 'transcoding',
 ): void {
-  workers[slot] = { fileName, srcRes, targetRes, hdr, removeHDR, progress: null };
+  workers[slot] = { fileName, srcRes, targetRes, hdr, removeHDR, progress: null, phase };
   if (active) {
     clearRendered();
     render();
@@ -220,6 +223,7 @@ export function getWorkerStates(): { slot: number; idle: boolean; fileName?: str
         hdr: w.hdr,
         removeHDR: w.removeHDR,
         progress: w.progress,
+        phase: w.phase,
       });
     } else {
       result.push({ slot: i, idle: true });
@@ -270,15 +274,21 @@ function render(): void {
       const hdrTag = w.hdr
         ? (w.removeHDR ? chalk.yellow(' HDR→SDR') : chalk.cyan(' HDR'))
         : '';
+      const phaseTag = w.phase === 'preflight' ? chalk.magenta(' [PREFLIGHT]') : '';
       lines.push(chalk.gray('  ┌─') + chalk.bold(` Worker ${i + 1} `) + chalk.gray('─'.repeat(44)));
-      lines.push(chalk.gray('  │ ') + chalk.white(w.fileName));
-      lines.push(
-        chalk.gray('  │ ') +
-        chalk.gray(`${w.srcRes} → `) +
-        chalk.cyan(w.targetRes) +
-        hdrTag,
-      );
-      lines.push(renderBar(w.progress));
+      lines.push(chalk.gray('  │ ') + chalk.white(w.fileName) + phaseTag);
+      if (w.phase === 'preflight') {
+        lines.push(chalk.gray('  │ ') + chalk.magenta('Testing GPU pipeline...'));
+        lines.push('  ' + chalk.gray('░'.repeat(35)) + ' ' + chalk.gray('Preflight'));
+      } else {
+        lines.push(
+          chalk.gray('  │ ') +
+          chalk.gray(`${w.srcRes} → `) +
+          chalk.cyan(w.targetRes) +
+          hdrTag,
+        );
+        lines.push(renderBar(w.progress));
+      }
       lines.push(chalk.gray('  └' + '─'.repeat(57)));
     } else {
       lines.push(chalk.gray(`  ┌─ Worker ${i + 1} `) + chalk.gray('─'.repeat(44)));

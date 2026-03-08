@@ -82,6 +82,8 @@ export interface VideoStream {
   color_primaries?: string;
   color_space?: string;
   pix_fmt?: string;
+  /** Field order: 'progressive', 'tt', 'bb', 'tb', 'bt' etc. Used for interlace detection. */
+  field_order?: string;
   /** Sample aspect ratio (e.g., "1:1", "32:27") */
   sample_aspect_ratio?: string;
   /** Display aspect ratio (e.g., "16:9", "4:3") */
@@ -122,7 +124,7 @@ export interface VideoMetadata {
 
 // ─── Jobs ────────────────────────────────────────────────────────────────────
 
-export type JobStatus = 'pending' | 'checking' | 'transcoding' | 'replacing' | 'completed' | 'failed' | 'skipped';
+export type JobStatus = 'pending' | 'checking' | 'preflight' | 'transcoding' | 'replacing' | 'completed' | 'failed' | 'skipped';
 
 export interface Job {
   id: number;
@@ -174,3 +176,58 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export const VIDEO_EXTENSIONS = new Set([
   '.mkv', '.mp4', '.avi', '.mov', '.wmv', '.webm', '.m4v', '.ts', '.flv', '.mpg', '.mpeg',
 ]);
+
+// ─── Preflight & Strategy Types ─────────────────────────────────────────────
+
+/** Describes which subtitle streams to map in the output */
+export type SubtitleDecision =
+  | { action: 'copy-all' }
+  | { action: 'copy-compatible'; indices: number[] }
+  | { action: 'drop-all'; reason: string };
+
+/** A detected issue that the preflight system found */
+export interface PreflightIssue {
+  type:
+    | 'subtitle-incompatible'
+    | 'interlaced'
+    | 'unusual-pixfmt'
+    | 'dolby-vision-profile'
+    | 'corrupt-suspect'
+    | 'nvenc-unsupported-input';
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  /** Extra data depending on type */
+  detail?: string;
+}
+
+/** A single transcode strategy to attempt, in priority order */
+export interface TranscodeStrategy {
+  /** Human-readable name for this strategy */
+  name: string;
+  /** Description of what this strategy does differently */
+  description: string;
+  /** hwaccel input options (e.g. ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']) */
+  inputOptions: string[];
+  /** Video filter chain (e.g. ['scale_cuda=...']) */
+  videoFilters: string[];
+  /** Output options for video encoding (e.g. ['-c:v hevc_nvenc', ...]) */
+  videoOutputOptions: string[];
+  /** Subtitle stream mapping: indices of subtitle streams to include, or 'all' | 'none' */
+  subtitleMapping: 'all' | 'none' | number[];
+  /** Whether this strategy uses GPU encoding (false = libx265 CPU) */
+  gpuEncode: boolean;
+}
+
+/** Result of running the preflight analysis */
+export interface PreflightResult {
+  /** All detected issues/warnings about the file */
+  issues: PreflightIssue[];
+  /** Ordered list of strategies to try (first = preferred) */
+  strategies: TranscodeStrategy[];
+  /** How to handle subtitle streams */
+  subtitleDecision: SubtitleDecision;
+  /** Whether deinterlace filter was injected */
+  isInterlaced: boolean;
+  /** Dolby Vision profile number if detected, null otherwise */
+  dvProfile: number | null;
+}

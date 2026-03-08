@@ -85,7 +85,7 @@ function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source_path);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_source_unique ON jobs(source_path)
-      WHERE status IN ('pending', 'checking', 'transcoding', 'replacing');
+      WHERE status IN ('pending', 'checking', 'preflight', 'transcoding', 'replacing');
   `);
 
   // Migration: add saved_bytes column if missing (for existing DBs)
@@ -267,7 +267,7 @@ export function updateJobStatus(jobId: number, status: JobStatus, extra?: { outp
   const sets: string[] = ['status = ?'];
   const params: unknown[] = [status];
 
-  if (status === 'transcoding' || status === 'checking') {
+  if (status === 'transcoding' || status === 'checking' || status === 'preflight') {
     sets.push("started_at = datetime('now','localtime')");
   }
   if (status === 'completed' || status === 'failed' || status === 'skipped') {
@@ -335,7 +335,7 @@ export function hasActiveJob(sourcePath: string): boolean {
   const d = getDb();
   const row = d.prepare(`
     SELECT COUNT(*) as cnt FROM jobs
-    WHERE source_path = ? AND status IN ('pending', 'checking', 'transcoding', 'replacing')
+    WHERE source_path = ? AND status IN ('pending', 'checking', 'preflight', 'transcoding', 'replacing')
   `).get(sourcePath) as { cnt: number };
   return row.cnt > 0;
 }
@@ -378,7 +378,7 @@ export function markInterruptedJobsAsFailed(): number {
   const result = d.prepare(`
     UPDATE jobs
     SET status = 'failed', error = 'Interrupted - application was closed during transcode', completed_at = datetime('now','localtime')
-    WHERE status IN ('checking', 'transcoding', 'replacing')
+    WHERE status IN ('checking', 'preflight', 'transcoding', 'replacing')
   `).run();
   return result.changes;
 }

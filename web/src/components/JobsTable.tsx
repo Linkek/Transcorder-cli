@@ -53,6 +53,7 @@ const statusColors: Record<string, 'success' | 'error' | 'warning' | 'info' | 'd
   skipped: 'warning',
   pending: 'info',
   checking: 'info',
+  preflight: 'info',
   transcoding: 'info',
   replacing: 'info',
 };
@@ -78,7 +79,7 @@ export default function JobsTable() {
 
   // Split jobs by status groups
   const completedJobs = useMemo(() => jobs.filter((j) => j.status === 'completed'), [jobs]);
-  const activeStatuses = ['pending', 'checking', 'transcoding', 'replacing'];
+  const activeStatuses = ['pending', 'checking', 'preflight', 'transcoding', 'replacing'];
   const pendingJobs = useMemo(() => jobs.filter((j) => activeStatuses.includes(j.status)), [jobs]);
   const failedJobs = useMemo(() => jobs.filter((j) => j.status === 'failed'), [jobs]);
   const skippedJobs = useMemo(() => jobs.filter((j) => j.status === 'skipped'), [jobs]);

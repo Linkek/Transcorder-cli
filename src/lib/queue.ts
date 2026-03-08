@@ -7,6 +7,7 @@ import { logger } from './logger.js';
 import { analyzeFile } from './check.js';
 import { transcode, replaceOriginal } from './transcode.js';
 import type { TranscodeHandle } from './transcode.js';
+import { runPreflight } from './preflight.js';
 import { formatResolution, probeFile } from './ffmpeg.js';
 import { removeCacheFile } from './cache.js';
 import {
@@ -225,6 +226,32 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
       return;
     }
 
+    // ── Step 1.5: Preflight ────────────────────────────────────────────────
+    updateJobStatus(job.id, 'preflight');
+    logger.debug(`Running preflight for: ${filePath}`);
+    setWorker(slot, fileName, formatResolution(metadata.video.width, metadata.video.height), '', false, false, 'preflight');
+
+    const preflightResult = await runPreflight(metadata, profile, checkResult);
+
+    // Log any preflight issues
+    for (const issue of preflightResult.issues) {
+      const icon = issue.severity === 'error' ? chalk.red(figures.cross)
+        : issue.severity === 'warning' ? chalk.yellow(figures.warning)
+        : chalk.blue(figures.info);
+      dashLog(`${ts()} ${icon} Preflight: ${chalk.white(fileName)} — ${issue.message}`);
+    }
+
+    if (preflightResult.strategies.length === 0) {
+      updateJobStatus(job.id, 'failed', { error: 'Preflight: no viable transcode strategy found — all test encodes failed' });
+      updateDashboardStats({ failed: 1 });
+      clearWorkerAndLog(slot,
+        `${ts()} ${chalk.red(figures.cross)} Preflight failed: ${chalk.white(fileName)} — no viable strategy`,
+      );
+      return;
+    }
+
+    logger.debug(`Preflight selected ${preflightResult.strategies.length} strategy(s): ${preflightResult.strategies.map((s) => s.name).join(' → ')}`);
+
     // ── Step 2: Transcode ─────────────────────────────────────────────────
     updateJobStatus(job.id, 'transcoding');
 
@@ -255,7 +282,10 @@ async function processFile(filePath: string, profile: Profile, slot: number): Pr
       onStart: (cmd) => {
         logger.debug(`FFmpeg started: ${cmd.slice(0, 200)}...`);
       },
-    });
+      onStrategySwitch: (from, to, reason) => {
+        dashLog(`${ts()} ${chalk.yellow(figures.warning)} ${chalk.white(fileName)}: strategy ${chalk.gray(from)} → ${chalk.cyan(to)} (${reason})`);
+      },
+    }, preflightResult);
 
     // Register active transcode so pause can kill it
     activeTranscodes.set(slot, { handle, jobId: job.id, filePath, profile });

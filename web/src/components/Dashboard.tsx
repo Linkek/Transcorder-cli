@@ -95,6 +95,7 @@ function StatCard({ title, value, icon, color, subtitle }: StatCardProps) {
 function WorkerCard({ worker }: { worker: WorkerState }) {
   const percent = worker.progress?.percent ?? 0
   const isActive = !worker.idle && worker.fileName
+  const isPreflight = isActive && worker.phase === 'preflight'
 
   return (
     <Card
@@ -140,14 +141,14 @@ function WorkerCard({ worker }: { worker: WorkerState }) {
           </Stack>
           {isActive ? (
             <Chip
-              label="Active"
+              label={isPreflight ? 'Preflight' : 'Active'}
               size="small"
               sx={{
                 height: 20,
                 fontSize: '0.65rem',
                 fontWeight: 600,
-                bgcolor: 'rgba(124, 77, 255, 0.15)',
-                color: tokens.primary,
+                bgcolor: isPreflight ? 'rgba(171, 71, 188, 0.15)' : 'rgba(124, 77, 255, 0.15)',
+                color: isPreflight ? '#AB47BC' : tokens.primary,
               }}
             />
           ) : (
@@ -182,7 +183,7 @@ function WorkerCard({ worker }: { worker: WorkerState }) {
             </Typography>
 
             <Typography variant="caption" sx={{ color: tokens.textMuted, display: 'block', mb: 1.5 }}>
-              {worker.srcRes} → {worker.targetRes}
+              {isPreflight ? 'Testing GPU pipeline...' : `${worker.srcRes} → ${worker.targetRes}`}
             </Typography>
 
             <Box sx={{ mb: 1 }}>

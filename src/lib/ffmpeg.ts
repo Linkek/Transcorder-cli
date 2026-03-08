@@ -60,6 +60,7 @@ export function probeFile(filePath: string): Promise<VideoMetadata> {
         color_primaries: (rawVideo as Record<string, unknown>).color_primaries as string | undefined,
         color_space: (rawVideo as Record<string, unknown>).color_space as string | undefined,
         pix_fmt: rawVideo.pix_fmt,
+        field_order: (rawVideo as Record<string, unknown>).field_order as string | undefined,
         sample_aspect_ratio: (rawVideo as Record<string, unknown>).sample_aspect_ratio as string | undefined,
         display_aspect_ratio: (rawVideo as Record<string, unknown>).display_aspect_ratio as string | undefined,
         side_data_list: (rawVideo as Record<string, unknown>).side_data_list as unknown[] | undefined,

@@ -65,6 +65,7 @@ export interface WorkerState {
   hdr?: boolean;
   removeHDR?: boolean;
   progress?: WorkerProgress | null;
+  phase?: 'preflight' | 'transcoding';
 }
 
 export const getWorkers = () => request<WorkerState[]>('/workers');

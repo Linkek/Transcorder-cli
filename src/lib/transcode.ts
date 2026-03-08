@@ -4,13 +4,15 @@ import path from 'node:path';
 import { moveFile, formatFileSize, buildOutputFileName } from './utils.js';
 import { logger } from './logger.js';
 import { formatResolution } from './ffmpeg.js';
-import type { Profile, CheckResult, TranscodeProgress } from '../types/index.js';
+import type { Profile, CheckResult, TranscodeProgress, PreflightResult, TranscodeStrategy } from '../types/index.js';
 
 export interface TranscodeCallbacks {
   onProgress?: (progress: TranscodeProgress) => void;
   onStart?: (command: string) => void;
   onEnd?: (outputPath: string) => void;
   onError?: (error: Error) => void;
+  /** Called when the transcode falls back to an alternative strategy */
+  onStrategySwitch?: (fromStrategy: string, toStrategy: string, reason: string) => void;
 }
 
 export interface TranscodeHandle {
@@ -21,18 +23,17 @@ export interface TranscodeHandle {
 }
 
 /**
- * Transcode a video file according to the profile settings.
- * Returns a handle with the promise and a kill function to abort.
+ * Transcode a video file using the preflight-determined strategy cascade.
+ * Tries each strategy in order until one succeeds or all fail.
  *
- * For files that need scaling (non-HDR), uses GPU-first with automatic CPU fallback:
- *   1. Try the proven GPU pipeline (scale_cuda) — fast
- *   2. If ffmpeg fails with a filter/format error, retry with CPU scaling — universal compat
- * All other paths (tonemap, re-encode only) run single-attempt as they already work reliably.
+ * When a preflight result is provided, uses its strategy cascade.
+ * Without preflight (legacy path), falls back to the original GPU→CPU approach.
  */
 export function transcode(
   checkResult: CheckResult,
   profile: Profile,
   callbacks?: TranscodeCallbacks,
+  preflightResult?: PreflightResult,
 ): TranscodeHandle {
   let cmd: ReturnType<typeof ffmpeg> | undefined;
   const kill = () => { cmd?.kill('SIGKILL'); };
@@ -66,249 +67,337 @@ export function transcode(
     logger.debug(`Transcoding: ${filePath} → ${outputPath}`);
     logger.debug(`Target: ${targetWidth}x${targetHeight}, HDR removal: ${metadata.isHDR && profile.removeHDR}`);
 
-    // ── Video filters ──────────────────────────────────────────────────────
-    const needsScale = metadata.video.width > targetWidth || metadata.video.height > targetHeight;
-    const needsTonemap = metadata.isHDR && profile.removeHDR;
+    // ── Strategy-driven execution ──────────────────────────────────────────
 
-    /**
-     * Build an ffmpeg command for a given scale strategy.
-     * 'gpu' = scale_cuda (original proven pipeline)
-     * 'cpu' = software scale (fallback for edge-case codecs/formats)
-     * null  = not a scale job (tonemap or re-encode only)
-     */
-    const buildCommand = (scaleStrategy: 'gpu' | 'cpu' | null) => {
-      const c = ffmpeg(filePath);
-
-      if (needsTonemap) {
-        // HDR→SDR: must go through CPU filters for tonemap, then back to NVENC
-        // Use zscale + tonemap pipeline
-        const filters: string[] = [];
-
-        // Convert to linear light first, then scale, then tonemap
-        // Scaling must happen in linear light for correct results with HDR content
-        filters.push(
-          'zscale=t=linear:npl=100',
-          'format=gbrpf32le',
-        );
-
-        if (needsScale) {
-          // Scale in linear light — use -2 for auto-calculated dimension to preserve AR
-          if (metadata.video.width / targetWidth >= metadata.video.height / targetHeight) {
-            filters.push(`scale=${targetWidth}:-2:flags=lanczos`);
-          } else {
-            filters.push(`scale=-2:${targetHeight}:flags=lanczos`);
-          }
-        }
-
-        filters.push(
-          'zscale=p=bt709',
-          'tonemap=mobius:desat=2',
-          'zscale=t=bt709:m=bt709:r=tv',
-          'format=yuv420p',
-        );
-
-        c
-          .videoFilters(filters)
-          .outputOptions([
-            `-c:v hevc_nvenc`,
-            `-preset ${profile.nvencPreset}`,
-            `-tune hq`,
-            `-rc:v vbr`,
-            `-cq:v ${profile.cqValue}`,
-            '-b:v 0',
-            '-pix_fmt yuv420p',
-          ]);
-      } else if (needsScale && scaleStrategy === 'gpu') {
-        // ── Original proven GPU scale pipeline ──────────────────────────────
-        // Scale only — use CUDA hardware scaling
-        // force_original_aspect_ratio=decrease fits within target box preserving aspect ratio
-        // force_divisible_by=2 ensures even dimensions (required by encoders)
-        const is10bit = metadata.video.pix_fmt &&
-          (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
-
-        c
-          .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
-          .videoFilters([
-            `scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-          ])
-          .outputOptions([
-            `-c:v hevc_nvenc`,
-            `-preset ${profile.nvencPreset}`,
-            `-tune hq`,
-            `-rc:v vbr`,
-            `-cq:v ${profile.cqValue}`,
-            '-b:v 0',
-            ...(is10bit ? ['-pix_fmt p010le'] : []),
-          ]);
-      } else if (needsScale && scaleStrategy === 'cpu') {
-        // ── CPU scale fallback ──────────────────────────────────────────────
-        // For edge-case codecs/formats where scale_cuda fails with filter errors.
-        // CUDA decode auto-downloads frames to CPU; software lanczos; NVENC encodes.
-        // Slower but universally compatible.
-        c
-          .inputOptions(['-hwaccel', 'cuda'])
-          .videoFilters([
-            `scale=${targetWidth}:${targetHeight}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
-            'format=yuv420p',
-          ])
-          .outputOptions([
-            `-c:v hevc_nvenc`,
-            `-preset ${profile.nvencPreset}`,
-            `-tune hq`,
-            `-rc:v vbr`,
-            `-cq:v ${profile.cqValue}`,
-            '-b:v 0',
-          ]);
-      } else {
-        // No scale, no tonemap — re-encode only
-        // Keep frames on GPU to avoid CPU-side pixel format conversion issues
-        const is10bit = metadata.video.pix_fmt &&
-          (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
-
-        c
-          .inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
-          .outputOptions([
-            `-c:v hevc_nvenc`,
-            `-preset ${profile.nvencPreset}`,
-            `-tune hq`,
-            `-rc:v vbr`,
-            `-cq:v ${profile.cqValue}`,
-            '-b:v 0',
-            ...(is10bit ? ['-pix_fmt p010le'] : []),
-          ]);
-      }
-
-      // ── Audio: copy all streams ───────────────────────────────────────────
-      c.outputOptions([
-        '-map 0:v:0',   // First video stream
-        '-map 0:a?',    // All audio streams (? = don't fail if none)
-        '-map 0:s?',    // All subtitle streams
-        '-c:a copy',    // Copy audio as-is
-        '-c:s copy',    // Copy subtitles as-is
-      ]);
-
-      // ── Preserve original frame rate ──────────────────────────────────────
-      if (metadata.video.frame_rate && metadata.video.frame_rate > 0) {
-        const fps = metadata.video.frame_rate;
-        logger.debug(`Preserving frame rate: ${fps.toFixed(3)} fps`);
-        c.outputOptions([`-r ${fps}`]);
-      }
-
-      // ── Metadata ──────────────────────────────────────────────────────────
-      c.outputOptions([
-        '-map_metadata 0',           // Copy global metadata
-        '-movflags +faststart',      // Web-friendly (for MP4)
-      ]);
-
-      c.output(outputPath);
-      return c;
-    };
-
-    /** Wire up progress/start/end/error events on an ffmpeg command */
-    const attachEvents = (
-      c: ReturnType<typeof ffmpeg>,
-      onDone: (out: string) => void,
-      onFail: (err: Error) => void,
-    ) => {
-      let startTime = Date.now();
-
-      c.on('start', (commandLine) => {
-        startTime = Date.now();
-        logger.debug(`FFmpeg command: ${commandLine}`);
-        callbacks?.onStart?.(commandLine);
-      });
-
-      c.on('progress', (progress) => {
-        const percent = progress.percent ?? 0;
-        const elapsed = (Date.now() - startTime) / 1000;
-        const eta = percent > 0 ? (elapsed / percent) * (100 - percent) : 0;
-
-        const tp: TranscodeProgress = {
-          percent: Math.min(100, Math.max(0, percent)),
-          fps: progress.currentFps ?? 0,
-          speed: parseFloat(String(progress.currentKbps ?? 0)),
-          eta,
-          currentSize: progress.targetSize ? progress.targetSize * 1024 : 0,
-          timemark: progress.timemark ?? '00:00:00',
-        };
-
-        callbacks?.onProgress?.(tp);
-      });
-
-      c.on('end', () => onDone(outputPath));
-      c.on('error', (err) => onFail(err));
-    };
-
-    // ── Execution with optional GPU→CPU fallback for scale jobs ─────────────
-    const canFallback = needsScale && !needsTonemap;
-
-    if (canFallback) {
-      // GPU-first: try scale_cuda, auto-retry with CPU scale on filter errors
-      cmd = buildCommand('gpu');
-
-      attachEvents(
-        cmd,
-        (out) => {
-          logger.debug(`Transcode complete (GPU scale): ${out}`);
-          callbacks?.onEnd?.(out);
-          resolve(out);
-        },
-        (err) => {
-          const msg = err.message.toLowerCase();
-          const isFilterError = msg.includes('filter') || msg.includes('auto_scale')
-            || msg.includes('impossible to convert') || msg.includes('invalid argument');
-
-          if (!isFilterError) {
-            logger.error(`Transcode failed: ${err.message}`);
-            callbacks?.onError?.(err);
-            reject(err);
-            return;
-          }
-
-          // Filter error → retry with CPU scaling
-          logger.info(`GPU scale failed for ${fileName}, retrying with CPU scale...`);
-          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-
-          cmd = buildCommand('cpu');
-          attachEvents(
-            cmd,
-            (out) => {
-              logger.debug(`Transcode complete (CPU scale fallback): ${out}`);
-              callbacks?.onEnd?.(out);
-              resolve(out);
-            },
-            (retryErr) => {
-              logger.error(`Transcode failed (CPU fallback): ${retryErr.message}`);
-              callbacks?.onError?.(retryErr);
-              reject(retryErr);
-            },
-          );
-          cmd.run();
-        },
+    if (preflightResult && preflightResult.strategies.length > 0) {
+      // Use the preflight strategy cascade
+      executeStrategyCascade(
+        filePath, outputPath, metadata, profile, preflightResult.strategies,
+        callbacks, cmd, (c) => { cmd = c; }, resolve, reject,
       );
     } else {
-      // Single-attempt paths: tonemap or re-encode only (no fallback needed)
-      cmd = buildCommand(null);
-
-      attachEvents(
-        cmd,
-        (out) => {
-          logger.debug(`Transcode complete: ${out}`);
-          callbacks?.onEnd?.(out);
-          resolve(out);
-        },
-        (err) => {
-          logger.error(`Transcode failed: ${err.message}`);
-          callbacks?.onError?.(err);
-          reject(err);
-        },
+      // Legacy path (no preflight result) — use original GPU→CPU approach
+      executeLegacy(
+        filePath, outputPath, metadata, profile, checkResult,
+        callbacks, cmd, (c) => { cmd = c; }, resolve, reject,
       );
     }
-
-    cmd.run();
   });
 
   return { promise, kill };
+}
+
+// ─── Strategy-driven execution ──────────────────────────────────────────────
+
+/**
+ * Build an ffmpeg command from a TranscodeStrategy object.
+ */
+function buildCommandFromStrategy(
+  filePath: string,
+  outputPath: string,
+  metadata: { video: { frame_rate?: number } },
+  strategy: TranscodeStrategy,
+): ReturnType<typeof ffmpeg> {
+  const c = ffmpeg(filePath);
+
+  // Input options (hwaccel etc.)
+  if (strategy.inputOptions.length > 0) {
+    c.inputOptions(strategy.inputOptions);
+  }
+
+  // Video filters
+  if (strategy.videoFilters.length > 0) {
+    c.videoFilters(strategy.videoFilters);
+  }
+
+  // Video output options (encoder, preset, quality)
+  c.outputOptions(strategy.videoOutputOptions);
+
+  // ── Stream mapping ──────────────────────────────────────────────────────
+  const mapOpts = ['-map 0:v:0', '-map 0:a?', '-c:a copy'];
+
+  if (strategy.subtitleMapping === 'all') {
+    mapOpts.push('-map 0:s?', '-c:s copy');
+  } else if (strategy.subtitleMapping === 'none') {
+    // No subtitle mapping — drop all subs
+  } else {
+    // Map specific subtitle streams by absolute index
+    for (const idx of strategy.subtitleMapping) {
+      mapOpts.push(`-map 0:${idx}`);
+    }
+    if (strategy.subtitleMapping.length > 0) {
+      mapOpts.push('-c:s copy');
+    }
+  }
+
+  c.outputOptions(mapOpts);
+
+  // ── Preserve original frame rate ────────────────────────────────────────
+  if (metadata.video.frame_rate && metadata.video.frame_rate > 0) {
+    const fps = metadata.video.frame_rate;
+    logger.debug(`Preserving frame rate: ${fps.toFixed(3)} fps`);
+    c.outputOptions([`-r ${fps}`]);
+  }
+
+  // ── Metadata ────────────────────────────────────────────────────────────
+  c.outputOptions(['-map_metadata 0', '-movflags +faststart']);
+
+  c.output(outputPath);
+  return c;
+}
+
+/** Wire up progress/start/end/error events on an ffmpeg command */
+function attachEvents(
+  c: ReturnType<typeof ffmpeg>,
+  outputPath: string,
+  callbacks: TranscodeCallbacks | undefined,
+  onDone: (out: string) => void,
+  onFail: (err: Error) => void,
+) {
+  let startTime = Date.now();
+
+  c.on('start', (commandLine) => {
+    startTime = Date.now();
+    logger.debug(`FFmpeg command: ${commandLine}`);
+    callbacks?.onStart?.(commandLine);
+  });
+
+  c.on('progress', (progress) => {
+    const percent = progress.percent ?? 0;
+    const elapsed = (Date.now() - startTime) / 1000;
+    const eta = percent > 0 ? (elapsed / percent) * (100 - percent) : 0;
+
+    const tp: TranscodeProgress = {
+      percent: Math.min(100, Math.max(0, percent)),
+      fps: progress.currentFps ?? 0,
+      speed: parseFloat(String(progress.currentKbps ?? 0)),
+      eta,
+      currentSize: progress.targetSize ? progress.targetSize * 1024 : 0,
+      timemark: progress.timemark ?? '00:00:00',
+    };
+
+    callbacks?.onProgress?.(tp);
+  });
+
+  c.on('end', () => onDone(outputPath));
+  c.on('error', (err) => onFail(err));
+}
+
+/**
+ * Execute strategies in cascade order. On failure, clean up and try next.
+ */
+function executeStrategyCascade(
+  filePath: string,
+  outputPath: string,
+  metadata: CheckResult['metadata'],
+  profile: Profile,
+  strategies: TranscodeStrategy[],
+  callbacks: TranscodeCallbacks | undefined,
+  _cmd: ReturnType<typeof ffmpeg> | undefined,
+  setCmd: (c: ReturnType<typeof ffmpeg>) => void,
+  resolve: (path: string) => void,
+  reject: (err: Error) => void,
+  strategyIndex = 0,
+): void {
+  if (strategyIndex >= strategies.length) {
+    reject(new Error('All transcode strategies exhausted — file cannot be transcoded'));
+    return;
+  }
+
+  const strategy = strategies[strategyIndex];
+  const isFirstAttempt = strategyIndex === 0;
+  const isLastStrategy = strategyIndex === strategies.length - 1;
+
+  if (!isFirstAttempt) {
+    const prevStrategy = strategies[strategyIndex - 1];
+    logger.info(`Strategy cascade: "${prevStrategy.name}" → "${strategy.name}" (${strategy.description})`);
+    callbacks?.onStrategySwitch?.(prevStrategy.name, strategy.name, strategy.description);
+  } else {
+    logger.debug(`Using strategy: ${strategy.name} (${strategy.description})`);
+  }
+
+  const c = buildCommandFromStrategy(filePath, outputPath, metadata, strategy);
+  setCmd(c);
+
+  attachEvents(
+    c,
+    outputPath,
+    callbacks,
+    (out) => {
+      logger.debug(`Transcode complete (${strategy.name}): ${out}`);
+      callbacks?.onEnd?.(out);
+      resolve(out);
+    },
+    (err) => {
+      if (isLastStrategy) {
+        // Last strategy — no more fallbacks
+        logger.error(`Transcode failed (${strategy.name}, final strategy): ${err.message}`);
+        callbacks?.onError?.(err);
+        reject(err);
+        return;
+      }
+
+      // Clean up partial output and try the next strategy
+      logger.warn(`Transcode failed (${strategy.name}): ${err.message} — trying next strategy...`);
+      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+
+      executeStrategyCascade(
+        filePath, outputPath, metadata, profile, strategies,
+        callbacks, _cmd, setCmd, resolve, reject,
+        strategyIndex + 1,
+      );
+    },
+  );
+
+  c.run();
+}
+
+// ─── Legacy execution path (backward compatible) ────────────────────────────
+
+/**
+ * Original GPU→CPU fallback logic for when no preflight result is provided.
+ * Kept for backward compatibility with direct transcode() calls.
+ */
+function executeLegacy(
+  filePath: string,
+  outputPath: string,
+  metadata: CheckResult['metadata'],
+  profile: Profile,
+  checkResult: CheckResult,
+  callbacks: TranscodeCallbacks | undefined,
+  _cmd: ReturnType<typeof ffmpeg> | undefined,
+  setCmd: (c: ReturnType<typeof ffmpeg>) => void,
+  resolve: (path: string) => void,
+  reject: (err: Error) => void,
+): void {
+  const { targetWidth, targetHeight } = checkResult;
+  const needsScale = metadata.video.width > targetWidth || metadata.video.height > targetHeight;
+  const needsTonemap = metadata.isHDR && profile.removeHDR;
+
+  /**
+   * Build an ffmpeg command for a given scale strategy (legacy).
+   */
+  const buildCommand = (scaleStrategy: 'gpu' | 'cpu' | null) => {
+    const c = ffmpeg(filePath);
+
+    if (needsTonemap) {
+      const filters: string[] = [];
+      filters.push('zscale=t=linear:npl=100', 'format=gbrpf32le');
+      if (needsScale) {
+        if (metadata.video.width / targetWidth >= metadata.video.height / targetHeight) {
+          filters.push(`scale=${targetWidth}:-2:flags=lanczos`);
+        } else {
+          filters.push(`scale=-2:${targetHeight}:flags=lanczos`);
+        }
+      }
+      filters.push('zscale=p=bt709', 'tonemap=mobius:desat=2', 'zscale=t=bt709:m=bt709:r=tv', 'format=yuv420p');
+      c.videoFilters(filters).outputOptions([
+        `-c:v hevc_nvenc`, `-preset ${profile.nvencPreset}`, `-tune hq`,
+        `-rc:v vbr`, `-cq:v ${profile.cqValue}`, '-b:v 0', '-pix_fmt yuv420p',
+      ]);
+    } else if (needsScale && scaleStrategy === 'gpu') {
+      const is10bit = metadata.video.pix_fmt &&
+        (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+      c.inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+        .videoFilters([`scale_cuda=${targetWidth}:${targetHeight}:interp_algo=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`])
+        .outputOptions([
+          `-c:v hevc_nvenc`, `-preset ${profile.nvencPreset}`, `-tune hq`,
+          `-rc:v vbr`, `-cq:v ${profile.cqValue}`, '-b:v 0',
+          ...(is10bit ? ['-pix_fmt p010le'] : []),
+        ]);
+    } else if (needsScale && scaleStrategy === 'cpu') {
+      c.inputOptions(['-hwaccel', 'cuda'])
+        .videoFilters([
+          `scale=${targetWidth}:${targetHeight}:flags=lanczos:force_original_aspect_ratio=decrease:force_divisible_by=2`,
+          'format=yuv420p',
+        ])
+        .outputOptions([
+          `-c:v hevc_nvenc`, `-preset ${profile.nvencPreset}`, `-tune hq`,
+          `-rc:v vbr`, `-cq:v ${profile.cqValue}`, '-b:v 0',
+        ]);
+    } else {
+      const is10bit = metadata.video.pix_fmt &&
+        (metadata.video.pix_fmt.includes('10le') || metadata.video.pix_fmt.includes('10be') || metadata.video.pix_fmt.includes('p010'));
+      c.inputOptions(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
+        .outputOptions([
+          `-c:v hevc_nvenc`, `-preset ${profile.nvencPreset}`, `-tune hq`,
+          `-rc:v vbr`, `-cq:v ${profile.cqValue}`, '-b:v 0',
+          ...(is10bit ? ['-pix_fmt p010le'] : []),
+        ]);
+    }
+
+    c.outputOptions(['-map 0:v:0', '-map 0:a?', '-map 0:s?', '-c:a copy', '-c:s copy']);
+    if (metadata.video.frame_rate && metadata.video.frame_rate > 0) {
+      c.outputOptions([`-r ${metadata.video.frame_rate}`]);
+    }
+    c.outputOptions(['-map_metadata 0', '-movflags +faststart']);
+    c.output(outputPath);
+    return c;
+  };
+
+  const canFallback = needsScale && !needsTonemap;
+
+  if (canFallback) {
+    const c = buildCommand('gpu');
+    setCmd(c);
+
+    attachEvents(c, outputPath, callbacks,
+      (out) => {
+        logger.debug(`Transcode complete (GPU scale): ${out}`);
+        callbacks?.onEnd?.(out);
+        resolve(out);
+      },
+      (err) => {
+        const msg = err.message.toLowerCase();
+        const isFilterError = msg.includes('filter') || msg.includes('auto_scale')
+          || msg.includes('impossible to convert') || msg.includes('invalid argument');
+
+        if (!isFilterError) {
+          logger.error(`Transcode failed: ${err.message}`);
+          callbacks?.onError?.(err);
+          reject(err);
+          return;
+        }
+
+        logger.info(`GPU scale failed for ${metadata.fileName}, retrying with CPU scale...`);
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+
+        const c2 = buildCommand('cpu');
+        setCmd(c2);
+        attachEvents(c2, outputPath, callbacks,
+          (out) => {
+            logger.debug(`Transcode complete (CPU scale fallback): ${out}`);
+            callbacks?.onEnd?.(out);
+            resolve(out);
+          },
+          (retryErr) => {
+            logger.error(`Transcode failed (CPU fallback): ${retryErr.message}`);
+            callbacks?.onError?.(retryErr);
+            reject(retryErr);
+          },
+        );
+        c2.run();
+      },
+    );
+    c.run();
+  } else {
+    const c = buildCommand(null);
+    setCmd(c);
+
+    attachEvents(c, outputPath, callbacks,
+      (out) => {
+        logger.debug(`Transcode complete: ${out}`);
+        callbacks?.onEnd?.(out);
+        resolve(out);
+      },
+      (err) => {
+        logger.error(`Transcode failed: ${err.message}`);
+        callbacks?.onError?.(err);
+        reject(err);
+      },
+    );
+    c.run();
+  }
 }
 
 /**
