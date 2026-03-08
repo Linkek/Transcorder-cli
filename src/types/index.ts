@@ -15,6 +15,8 @@ export interface GlobalConfig {
   pauseOnStartup: boolean;
   /** Number of concurrent transcode workers (default: 2) */
   workers: number;
+  /** Hours between automatic folder rescans (0 = disabled, default: 24) */
+  rescanIntervalHours: number;
 }
 
 export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
@@ -25,6 +27,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfig = {
   localAllow: true,
   pauseOnStartup: false,
   workers: 2,
+  rescanIntervalHours: 24,
 };
 
 // ─── Profile Configuration ───────────────────────────────────────────────────

@@ -128,11 +128,54 @@ export async function startDaemon(verbose: boolean): Promise<void> {
   logger.info('Daemon watching for changes. Press [p] to pause/resume, Ctrl+C to stop.');
   logger.blank();
 
+  // ── Periodic rescanning ──────────────────────────────────────────────────
+  let rescanTimer: NodeJS.Timeout | null = null;
+  if (globalConfig.rescanIntervalHours > 0) {
+    const intervalMs = globalConfig.rescanIntervalHours * 60 * 60 * 1000;
+    logger.info(`Periodic rescanning enabled: every ${globalConfig.rescanIntervalHours} hours`);
+    
+    const performRescan = async () => {
+      logger.info('Starting periodic rescan...');
+      let newFiles = 0;
+      
+      for (const profile of profiles) {
+        for (const folder of profile.sourceFolders) {
+          const files = scanFolder(folder, profile.recursive);
+          
+          for (const filePath of files) {
+            try {
+              if (hasCompletedJob(filePath) || hasFailedJob(filePath)) {
+                continue;
+              }
+              
+              const result = await analyzeFile(filePath, profile);
+              if (result.needsTranscode) {
+                queueFile(filePath, profile);
+                newFiles++;
+              }
+            } catch (err) {
+              logger.error(`Error during rescan of ${filePath}: ${(err as Error).message}`);
+            }
+          }
+        }
+      }
+      
+      if (newFiles > 0) {
+        logger.info(`Periodic rescan complete: ${newFiles} new files queued`);
+      } else {
+        logger.debug('Periodic rescan complete: no new files found');
+      }
+    };
+    
+    rescanTimer = setInterval(performRescan, intervalMs);
+  }
+
   // Keep alive
   await new Promise<void>((resolve) => {
     const shutdown = async () => {
       destroyDashboard();
       if (stopWebUI) stopWebUI();
+      if (rescanTimer) clearInterval(rescanTimer);
       logger.blank();
       logger.info('Shutting down...');
       await stopWatching(watchers);
