@@ -32,7 +32,7 @@ export function startWatching(profiles: Profile[], callbacks: WatcherCallbacks):
         persistent: true,
         ignoreInitial: true, // Don't process existing files on startup
         awaitWriteFinish: false, // We handle stability ourselves
-        depth: profile.recursive ? 10 : 0, // Recurse based on profile setting
+        depth: profile.recursive ? undefined : 0, // Unlimited depth when recursive
         ignored: [
           /(^|[\/\\])\../, // Hidden files
           /node_modules/,

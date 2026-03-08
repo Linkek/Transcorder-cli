@@ -2,8 +2,7 @@ import chalk from 'chalk';
 import path from 'node:path';
 import { logger } from '../lib/logger.js';
 import { loadProfiles, loadGlobalConfig } from '../lib/profiles.js';
-import { closeDb, getStats, hasCompletedJob, hasFailedJob, markInterruptedJobsAsFailed } from '../lib/db.js';
-import { analyzeFile } from '../lib/check.js';
+import { closeDb, getStats, hasCompletedJob, hasFailedJob, markInterruptedJobsAsFailed, getAllProcessedFiles } from '../lib/db.js';
 import { queueFile, resumePendingJobs, pauseQueue, resumeQueue, isQueuePaused, reinitWorkerSlots } from '../lib/queue.js';
 import { startWatching, stopWatching, scanFolder } from '../lib/watcher.js';
 import { clearAllCaches } from '../lib/cache.js';
@@ -78,44 +77,37 @@ export async function startDaemon(verbose: boolean): Promise<void> {
     });
   }
 
-  // ── Initial scan: process all existing files first ──
+  // ── Initial scan: discover files and queue new ones (no ffprobe here) ──
   let totalFiles = 0;
   let queuedFiles = 0;
+  let knownFiles = 0;
+
+  // Get all already-known files in one query for fast lookup
+  const processedFiles = getAllProcessedFiles();
+  logger.info(`Found ${processedFiles.size} already-known files in database`);
 
   for (const profile of profiles) {
     for (const folder of profile.sourceFolders) {
       logger.info(`Scanning: ${folder} (profile: ${profile.name})`);
       const files = scanFolder(folder, profile.recursive);
       totalFiles += files.length;
+      logger.info(`Found ${files.length} video files in ${folder}`);
 
+      // Queue all files not yet known to the database — analysis happens
+      // later when the worker picks up the job (processFile → analyzeFile)
       for (const filePath of files) {
-        try {
-          if (hasCompletedJob(filePath)) {
-            logger.debug(`Skip: ${path.basename(filePath)} — already completed`);
-            continue;
-          }
-
-          if (hasFailedJob(filePath)) {
-            logger.debug(`Skip: ${path.basename(filePath)} — previously failed (retry from UI)`);
-            continue;
-          }
-
-          const result = await analyzeFile(filePath, profile);
-          if (result.needsTranscode) {
-            queueFile(filePath, profile);
-            queuedFiles++;
-          } else {
-            logger.debug(`Skip: ${path.basename(filePath)} — meets criteria`);
-          }
-        } catch (err) {
-          logger.error(`Error analyzing ${filePath}: ${(err as Error).message}`);
+        if (processedFiles.has(filePath)) {
+          knownFiles++;
+        } else {
+          queueFile(filePath, profile);
+          queuedFiles++;
         }
       }
     }
   }
 
   logger.blank();
-  logger.success(`Scan complete: ${totalFiles} files found, ${queuedFiles} queued for transcoding`);
+  logger.success(`Scan complete: ${totalFiles} files found, ${knownFiles} already known, ${queuedFiles} queued`);
   logger.blank();
 
   // ── Start watching for new files ──
@@ -138,23 +130,17 @@ export async function startDaemon(verbose: boolean): Promise<void> {
       logger.info('Starting periodic rescan...');
       let newFiles = 0;
       
+      // Get updated known files list
+      const processedFiles = getAllProcessedFiles();
+      
       for (const profile of profiles) {
         for (const folder of profile.sourceFolders) {
           const files = scanFolder(folder, profile.recursive);
           
           for (const filePath of files) {
-            try {
-              if (hasCompletedJob(filePath) || hasFailedJob(filePath)) {
-                continue;
-              }
-              
-              const result = await analyzeFile(filePath, profile);
-              if (result.needsTranscode) {
-                queueFile(filePath, profile);
-                newFiles++;
-              }
-            } catch (err) {
-              logger.error(`Error during rescan of ${filePath}: ${(err as Error).message}`);
+            if (!processedFiles.has(filePath)) {
+              queueFile(filePath, profile);
+              newFiles++;
             }
           }
         }

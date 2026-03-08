@@ -358,6 +358,18 @@ export function hasFailedJob(sourcePath: string): boolean {
 }
 
 /**
+ * Get all file paths that have any existing job (completed, skipped, failed, pending, or active).
+ * Returns a Set for O(1) lookup performance during scanning.
+ */
+export function getAllProcessedFiles(): Set<string> {
+  const d = getDb();
+  const rows = d.prepare(`
+    SELECT DISTINCT source_path FROM jobs
+  `).all() as { source_path: string }[];
+  return new Set(rows.map(r => r.source_path));
+}
+
+/**
  * Clear any failed jobs for a specific file (to allow retry).
  */
 export function clearFailedJobForFile(sourcePath: string): number {
