@@ -228,91 +228,77 @@ export default function JobsTable() {
       </Stack>
 
       {/* Completed */}
-      {completedJobs.length > 0 && (
-        <StatusSection
-          title="Completed"
-          count={completedJobs.length}
-          color="success"
-          jobs={completedJobs}
-          columns={columns}
-          isLoading={isLoading}
-          defaultExpanded
-          renderRowActions={(row) => (
-            <Tooltip title="Delete">
-              <IconButton size="small" color="error" onClick={() => deleteMut.mutate(row.original.id)}>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
-        />
-      )}
+      <StatusSection
+        title="Completed"
+        count={completedJobs.length}
+        color="success"
+        jobs={completedJobs}
+        columns={columns}
+        isLoading={isLoading}
+        defaultExpanded
+        renderRowActions={(row) => (
+          <Tooltip title="Delete">
+            <IconButton size="small" color="error" onClick={() => deleteMut.mutate(row.original.id)}>
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+      />
 
       {/* Pending / Active */}
-      {pendingJobs.length > 0 && (
-        <StatusSection
-          title="Pending / Active"
-          count={pendingJobs.length}
-          color="info"
-          jobs={pendingJobs}
-          columns={columns}
-          isLoading={isLoading}
-          defaultExpanded
-        />
-      )}
+      <StatusSection
+        title="Pending / Active"
+        count={pendingJobs.length}
+        color="info"
+        jobs={pendingJobs}
+        columns={columns}
+        isLoading={isLoading}
+        defaultExpanded
+      />
 
       {/* Failed */}
-      {failedJobs.length > 0 && (
-        <StatusSection
-          title="Failed"
-          count={failedJobs.length}
-          color="error"
-          jobs={failedJobs}
-          columns={columns}
-          isLoading={isLoading}
-          defaultExpanded
-          visibleColumns={{ error: true }}
-          renderRowActions={(row) => (
-            <Stack direction="row" spacing={0.5}>
-              <Tooltip title="Retry">
-                <IconButton size="small" color="primary" onClick={() => retryMut.mutate(row.original.id)}>
-                  <ReplayIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Delete">
-                <IconButton size="small" color="error" onClick={() => deleteMut.mutate(row.original.id)}>
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Stack>
-          )}
-        />
-      )}
-
-      {/* Skipped */}
-      {skippedJobs.length > 0 && (
-        <StatusSection
-          title="Skipped"
-          count={skippedJobs.length}
-          color="warning"
-          jobs={skippedJobs}
-          columns={columns}
-          isLoading={isLoading}
-          defaultExpanded={false}
-          renderRowActions={(row) => (
+      <StatusSection
+        title="Failed"
+        count={failedJobs.length}
+        color="error"
+        jobs={failedJobs}
+        columns={columns}
+        isLoading={isLoading}
+        defaultExpanded
+        visibleColumns={{ error: true }}
+        renderRowActions={(row) => (
+          <Stack direction="row" spacing={0.5}>
+            <Tooltip title="Retry">
+              <IconButton size="small" color="primary" onClick={() => retryMut.mutate(row.original.id)}>
+                <ReplayIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             <Tooltip title="Delete">
               <IconButton size="small" color="error" onClick={() => deleteMut.mutate(row.original.id)}>
                 <DeleteIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-          )}
-        />
-      )}
+          </Stack>
+        )}
+      />
 
-      {!isLoading && jobs.length === 0 && (
-        <Typography color="text.secondary" textAlign="center" py={4}>
-          No jobs found
-        </Typography>
-      )}
+      {/* Skipped */}
+      <StatusSection
+        title="Skipped"
+        count={skippedJobs.length}
+        color="warning"
+        jobs={skippedJobs}
+        columns={columns}
+        isLoading={isLoading}
+        defaultExpanded={false}
+        renderRowActions={(row) => (
+          <Tooltip title="Delete">
+            <IconButton size="small" color="error" onClick={() => deleteMut.mutate(row.original.id)}>
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+      />
     </Box>
   );
 }
